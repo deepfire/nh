@@ -1072,7 +1072,10 @@ execute_trim() {
 
                 echo "--( ${attr} trimmable: ${trimset}"
                 for over in ${trimset}
-                do _set def/over ${over} ${attr} ""
+                do if ! has  def/meta ${over}.explanation ${attr}
+                   then _set def/over ${over} ${attr} ""
+                   else echo "---( keeping ${over}, since it has an explanation"
+                   fi
                 done
         done
 }
@@ -1087,7 +1090,7 @@ trim_one() {
 
         for over in $(lsattrs def/over ${attr})
         do echo -n "TRIM ${attr} -${over}>  "
-           if has def/meta explanation "${over}" "${attr}"
+           if has def/meta "${over}.explanation" "${attr}"
            then echo "SKIPPED, explanation exists:  nh x emit_explanation ${over} ${attr}"
            elif with_field_value def/over "${over}" "${attr}" ""     coherently --reuse-cache ${attr} "${over}" override_builder ${attr} ${over}
            then echo "OK: $(get ${SUCCTY} ${over} ${attr})"
@@ -1666,6 +1669,8 @@ show-override )    emit_override "$1";;                        ## Print the over
 show-cache )       get cache override "$1";;                   ## Print the cached override value
 sanity-check )     ## For internal consistency checking (non-audit-related).
                    fail "NOT-IMPLEMENTED-BUT-SORELY-NEEDED";;
+explain )          attr="$1"; over="$2";
+                   emit_explanation "${over}" "${attr}";;
 
 ## Meta manupulation:                                          ## List/get/set non-directly-overriding properties
 ls-meta )          lsattrs    def/meta  "$1";;

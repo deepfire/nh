@@ -76,12 +76,16 @@
        ..and this is probably going to fail, because the trim is often over-eager.
        So, some of the overrides need to be un-done, and the figuring out part is
        manual.  Thankfully, we can record the manually-collected information in
-       the database:
+       the database (which would prevent trimming of this override in the future):
 
        : nh set-explanation broken-attribute doCheck
 
-       Rinse, repeat -- and remember that individual attributes can be rebuild
+       Rinse, repeat -- and remember that individual attributes can be rebuilt
        using =nh baseline=.
+
+       Also, explanations (aka proofs of override) can be shown per-override with:
+
+       : nh explain happy src
 
     Finally:  look at =suite.sh= for inspiration.
 
@@ -111,7 +115,7 @@
     - shadowed :: phase #5 (/after shadow attributes -- those shadowing non-versioned ones/)
     - config :: not-really-phase #7
 
-*** Key concepts
+*** Key points
 
     1. =nh= tracks the aforementioned attribute status and content of the
        attribute overrides in a /package database/ (aka *PKGDB*).  This is just a
