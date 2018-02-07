@@ -1,0 +1,9 @@
+* To Do
+
+    1. Gang github-override-caused overrides with 'src' when trimming:
+       - editedCabalFile
+       - revision
+       - chdir
+    2. Obtain a Haskell library that would accomodate bash-style programming better
+       than shelly/turtle/shell-conduit.
+    3. Rewrite in Haskell.

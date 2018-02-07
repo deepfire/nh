@@ -1,0 +1,158 @@
+* nh: manage Nix Haskell override sets
+*** What
+
+    Manage a set of Nix [[https://github.com/NixOS/nixpkgs/blob/master/pkgs/development/haskell-modules/configuration-ghc-8.4.x.nix][Haskell package overrides]], somewhat automatically:
+
+    Put another way, it helps establish properties of every override in a set:
+      - validity (/whether it breaks things/)
+      - necessity (/whether it's needed to keep things working, along with a proof/)
+      - actuality (/whether the override status is up to date with the upstream, Hackage and Nixpkgs/)
+
+    Additionally, it eases hand maintenance of overrides, like:
+
+    : nh hackage    foo 1.2.14
+    : nh hackage-up foo
+    : nh unmerged   bar concerned-citizen PR-number
+
+*** Brutal, no-nonsense introduction
+
+    1. Init a package DB:
+
+       : nh init
+
+       ..which will ask you to create a config file first -- follow the
+       instuctions.
+
+    2. Add overrides:
+
+       : nh hackage-up lens                            # easy: there's a Hackage release, get the latest
+
+       : nh set-upstream microlens-th aelve
+       : nh upstream     microlens-th master           # Fetch the tip of upstream's master
+       : nh set-repoName microlens-th microlens        # A single repository carries several packages.
+       : nh chdir        microlens-th microlens-th
+
+       : nh set-upstream hedgehog hedgehogqa
+       : nh unmerged     hedgehog gwils 134 [GIT-REV]  # the third argument to =unmerged= is the Github PR #
+
+    3. Observe the changes:
+
+       : nh show lens
+       : nh show microlens-th
+       : nh show hedgehog
+
+       ..and you always can generate =overrides.nix= from the very latest package
+       database -- although it happens transparently most of the time:
+
+       : nh overrides
+
+    4. Validate if the overridden packages build now:
+
+       : nh baseline [NAME..]                          # Defaults to building everything
+
+    5. See what the audit tool thinks about the situation:
+
+       : nh audit --skip-baseline [NAME..]             # Defaults to everything, once more
+                                                       # --skip-baseline, because we already did that part.
+
+       It should complain, at the very least because the =trim= part was not run,
+       and so there's no proof that any of the overrides are necessary.
+
+    6. Let's try trimming the set:
+
+       : nh trim --skip-baseline [NAME..]
+
+       That would take a while, and also it won't do anything to the recorded
+       overrides -- it merely collected information, as an intermediate step.
+
+       Let's execute on that information, then:
+
+       : nh execute-trim
+
+    7. Audit again:
+
+       : nh audit
+
+       ..and this is probably going to fail, because the trim is often over-eager.
+       So, some of the overrides need to be un-done, and the figuring out part is
+       manual.  Thankfully, we can record the manually-collected information in
+       the database:
+
+       : nh set-explanation broken-attribute doCheck
+
+       Rinse, repeat -- and remember that individual attributes can be rebuild
+       using =nh baseline=.
+
+    Finally:  look at =suite.sh= for inspiration.
+
+*** Overview: lifecycle of fixes
+
+    First, we describe the general flow of fixes, to establish a terminology.
+
+    1. Fixes are generally born on a third-party Github repo, and they are
+       expected to be submitted upstream via pull request.
+    2. The PR gets merged upstream.
+    3. Upstream cuts a release, bumping the package version in the cabal file.
+    4. Upstream performs a Hackage upload.
+    5. Nixpkgs imports Hackage, adding a versioned =package-attribute_1_2_1_0=.
+    6. Nixpkgs promotest the versioned =package-attribute_1_2_1_0= to
+       =package-attribute=, which completes the cycle.
+
+    7. Nixpkgs also supports non-source tweaks (jailbreaking out of restrictive
+       version bounds, test and Haddock generation disables).
+
+*** Overview: above lifecycle, seen by =nh=
+
+    =nh= maps the above into a /status/, per attribute:
+
+    - unmerged :: phases #1
+    - upstreamed :: phases #2 and #3
+    - hackaged :: phase #4
+    - shadowed :: phase #5 (/after shadow attributes -- those shadowing non-versioned ones/)
+    - config :: not-really-phase #7
+
+*** Key concepts
+
+    1. =nh= tracks the aforementioned attribute status and content of the
+       attribute overrides in a /package database/ (aka *PKGDB*).  This is just a
+       file-system directory -- but it's better to version it in Git, to be able
+       to recover, when =nh= goes off-rails and breaks overrides.
+
+    2. The result is delivered in the form of a Nix file defining a GHC package
+       set override (customarily called =overrides.nix=).
+
+       This trivially-structured, generated file is then supposed to be imported
+       into another, static Nix file called =packages.nix=, which then forms a
+       proper GHC package set.  That one can be passed to =nix-build=.
+
+    3. The major package DB operations that =nh= provides are:
+
+       - baseline :: Build every attribute in the override set.
+       - trim     :: Try to remove overrides, one by one, and record the results
+                     of those attempts in the package DB -- trying to deducing
+                     whether these overrides are necessary.  It is a heuristic.
+       - execute-trim :: Modify the package DB in accordance with the /trim/ step.
+                         This effectively removes any overrides that weren't found
+                         necessary.  This is also error-prone (more things are
+                         sometimes removed than is feasible).
+       - audit    :: Verify every attribute against a set of status-dependent
+                     invariants, that ensure:
+         - the override necessity (along with the existence of proof), and
+         - the override being up-to-date.
+
+    4. =nh= keeps as much build information as possible, and that includes store
+       derivation links, store source links, override expressions and build logs
+       for every build attempt that takes place.  In particular every attribute
+       build attempt happens in three phases, handled separately:
+       - attribute instantiation
+       - dependency pre-build
+       - build of the attribute itself
+
+*** Structure of the package database
+
+    - defs :: definitions
+      - meta :: non-override metadata
+      - over :: overrides
+      - hackage, github :: src-specific information, per-attribute-override
+    - cache :: override cache, per-attribute
+    - build :: build output information: logs, expressions, derivations
