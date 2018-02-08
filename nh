@@ -34,26 +34,26 @@ when() { local pred="$1"; shift; if test -n "${pred}"; then "$@"; fi
        }
 
 init_pkgdb() {
-	dir="$1"
-	force="$2"
+        dir="$1"
+        force="$2"
 
-	if   test -e "${dir}" -a "${force}" != "--force"
-	then fail "cannot make a new override database at '${dir}': already exists"
+        if   test -e "${dir}" -a "${force}" != "--force"
+        then fail "cannot make a new override database at '${dir}': already exists"
         elif test -z "${dir}"
-	then fail "override DB location not specified"
+        then fail "override DB location not specified"
         fi
 
-	mkdir -p ${dir}/def/{over,meta,github,hackage}
-	mkdir -p ${dir}/cache
-	mkdir -p ${dir}/build/{log,drv,expr,src,success,failure{,-type,-log}}
-	rm -f ${dir}/def/{over,meta,github,hackage}/*
-	rm -f ${dir}/cache/*
-	rm -f ${dir}/build/{log,drv,expr,src,success,failure{,-type,-log}}/*
-	exit 0
+        mkdir -p ${dir}/def/{over,meta,github,hackage}
+        mkdir -p ${dir}/cache
+        mkdir -p ${dir}/build/{log,drv,expr,src,success,failure{,-type,-log}}
+        rm -f ${dir}/def/{over,meta,github,hackage}/*
+        rm -f ${dir}/cache/*
+        rm -f ${dir}/build/{log,drv,expr,src,success,failure{,-type,-log}}/*
+        exit 0
 }
 validate_pkgdb() {
         pkgdb="$1"
-	test    -d ${pkgdb}/def/over    \
+        test    -d ${pkgdb}/def/over    \
              -a -d ${pkgdb}/def/meta    \
              -a -d ${pkgdb}/def/github  \
              -a -d ${pkgdb}/def/hackage \
@@ -72,7 +72,7 @@ FAILLOGTY=build/failure-log
 
 emit_nh_config() {
         PKGDB="$1"
-	cat <<EOF
+        cat <<EOF
 GHC=${DEFAULT_GHC}
 PKGDB=${PKGDB}  # The override state database.
 NIX_GHC_OVERRIDES=overrides.nix        # The job of 'nh' is to help you maintain this.
@@ -212,7 +212,7 @@ _ls() {
                 def/over | build/success | build/failure ) ls -1 *            2>/dev/null | grep -v "\\.baseline$" | sed 's/^\(.*\)\.[^\.]*$/\1/' | sort | uniq;;
                 * ) echo "FATAL: listing of '${TYPE}' is not supported" >&2; popd; return 1;;
         esac | sort
-	popd >/dev/null
+        popd >/dev/null
 }
 lsattrs() {
         local TYPE="$1"; shift
@@ -220,7 +220,7 @@ lsattrs() {
 
         pushd ${PKGDB}/${TYPE} >/dev/null
         ls -1 * 2>/dev/null | grep "^$NAME\\." | grep -v "\\.baseline$" | sed 's/^[^\.]*\.\(.*\)$/\1/'
-	popd >/dev/null
+        popd >/dev/null
 }
 get() {
         local TYPE="$1"
@@ -228,7 +228,7 @@ get() {
         local NAME="$3"
 
         if test -f ${PKGDB}/${TYPE}/${NAME}.${FIELD}
-	then   cat ${PKGDB}/${TYPE}/${NAME}.${FIELD} 2>/dev/null
+        then   cat ${PKGDB}/${TYPE}/${NAME}.${FIELD} 2>/dev/null
         else return 1
         fi
 }
@@ -313,7 +313,7 @@ test_shadow_exists() {
 test_shadowed() {
         local attr="$1";        shift
 
-	test_shadow_exists "${attr}" && ! has def/meta suppress-shadow "${attr}" ## XXX: re-use the 'disable' mechanism
+        test_shadow_exists "${attr}" && ! has def/meta suppress-shadow "${attr}" ## XXX: re-use the 'disable' mechanism
 }
 
 log_filter_failure() {
