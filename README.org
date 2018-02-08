@@ -1,14 +1,14 @@
 * nh: manage Nix Haskell override sets
 *** What
 
-    Manage a set of Nix [[https://github.com/NixOS/nixpkgs/blob/master/pkgs/development/haskell-modules/configuration-ghc-8.4.x.nix][Haskell package overrides]], somewhat automatically:
+    Manage a set of Nix [[https://github.com/NixOS/nixpkgs/blob/master/pkgs/development/haskell-modules/configuration-ghc-8.4.x.nix][Haskell package overrides]], somewhat automatically.
 
-    Put another way, it helps establish properties of every override in a set:
+    Put another way, it aids definition and validation of properties of every override in a set:
       - validity (/whether it breaks things/)
       - necessity (/whether it's needed to keep things working, along with a proof/)
       - actuality (/whether the override status is up to date with the upstream, Hackage and Nixpkgs/)
 
-    Additionally, it eases hand maintenance of overrides, like:
+    Definitions are managed somewhat conveniently, like:
 
     : nh hackage    foo 1.2.14
     : nh hackage-up foo
@@ -58,6 +58,9 @@
        It should complain, at the very least because the =trim= part was not run,
        and so there's no proof that any of the overrides are necessary.
 
+       Note that the =nt audit= subcommand provides suggestions, that can be
+       auto-executed when the =--auto-fix= option is supplied.
+
     6. Let's try trimming the set:
 
        : nh trim --skip-baseline [NAME..]
@@ -74,9 +77,10 @@
        : nh audit
 
        ..and this is probably going to fail, because the trim is often over-eager.
-       So, some of the overrides need to be un-done, and the figuring out part is
-       manual.  Thankfully, we can record the manually-collected information in
-       the database (which would prevent trimming of this override in the future):
+       So, some of the overrides need to be reintroduced, and the
+       figuring-out-what-and-why part is manual (albeit assisted).  Thankfully, we
+       can record the manually-collected information in the database (which would
+       prevent trimming of this override in the future):
 
        : nh set-explanation broken-attribute doCheck
 
@@ -154,7 +158,7 @@
 
 *** Structure of the package database
 
-    - defs :: definitions
+    - def :: definitions
       - meta :: non-override metadata
       - over :: overrides
       - hackage, github :: src-specific information, per-attribute-override

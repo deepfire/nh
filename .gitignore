@@ -21,6 +21,7 @@
 /dist/
 /cabal-dev/
 /.cabal-sandbox/
+/tests
 /tests/.nh
 /tests/packages.nix
 /tests/overrides.nix
