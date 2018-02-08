@@ -2,6 +2,9 @@
 
 set -e
 
+if test -n "${NH_DEBUG}"
+then set -x
+fi
 DEFAULT_GHC=841  ## The value is actually configured, so this is for the absolute defaults.
 
 backtrace() {
@@ -10,7 +13,7 @@ backtrace() {
     echo "Backtrace:" >&2
     for ((i=1;i<${#FUNCNAME[@]}-1;i++))
     do
-      echo " $i: ${BASH_SOURCE[$i+1]}:${BASH_LINENO[$i]} ${FUNCNAME[$i]} ${BASH_ARGV[$i]}" >&2
+      echo " $i: ${BASH_SOURCE[$i+1]}:${BASH_LINENO[$i]} ${FUNCNAME[$i]} ${BASH_ARGV[$i+1]}" >&2
     done
   fi
 }
@@ -216,7 +219,7 @@ lsattrs() {
         local NAME="$1"; shift
 
         pushd ${PKGDB}/${TYPE} >/dev/null
-        ls -1 * 2>/dev/null | grep "^$NAME\\." | grep -v "\\.baseline$" | sed 's/^.*\.\([^\.]*\)$/\1/'
+        ls -1 * 2>/dev/null | grep "^$NAME\\." | grep -v "\\.baseline$" | sed 's/^[^\.]*\.\(.*\)$/\1/'
 	popd >/dev/null
 }
 get() {
@@ -310,7 +313,7 @@ test_shadow_exists() {
 test_shadowed() {
         local attr="$1";        shift
 
-	test_shadow_exists "${attr}" && ! has def/meta suppress-shadow "${attr}"
+	test_shadow_exists "${attr}" && ! has def/meta suppress-shadow "${attr}" ## XXX: re-use the 'disable' mechanism
 }
 
 log_filter_failure() {
@@ -342,7 +345,7 @@ evaluation_failure_attributes() {
         local grep_extra="$1"
         grep "while evaluating the attribute${grep_extra}" | sed 's/.*derivation ‘\(.*\)’ at.*/\1/'
 }
-instantiate() {
+do_instantiate() {
         local attr="$1"; shift
 
         if !    nix-instantiate ${NIX_GHC_PACKAGE_SET} -A ${attr} --argstr compiler ghc${GHC} 2>/dev/null
@@ -356,7 +359,7 @@ instantiate() {
 nreferrers() {
         local attr="$1"
 
-        local drv=$(instantiate ${attr})
+        local drv=$(do_instantiate ${attr})
         local refs=$(nix-store --query --referrers-closure ${drv} | wc -l)
         echo ${refs} ${attr} ${drv}
 }
@@ -464,9 +467,9 @@ faillog() {
         }
 
 	set +e
-        get build/failure-log ${over} ${attr}.prebuild
+        get ${FAILLOGTY} ${over} ${attr}.prebuild
         local status0=$?
-        get build/failure-log ${over} ${attr}
+        get ${FAILLOGTY} ${over} ${attr}
         local status1=$?
 	set -e
 
@@ -517,13 +520,14 @@ fail_classify_one_property() {
         local no_state_change="$1"
 
         for i in "${!sig[@]}"
-        do if      { get_log ${over} ${attr}.prebuild; get_log ${over} ${attr}; } | egrep --max-count=1                  "${sig[$i]}" >/dev/null 2>&1
+        do if      get_log ${over} ${attr} | egrep --max-count=1                  "${sig[$i]}" >/dev/null 2>&1
            then
                    echo ${i}
                    if test -z "${no_state_change}"
                    then _set ${FAILTYTY} ${over} ${attr} "$i"
                    fi
-                   { get_log ${over} ${attr}.prebuild; get_log ${over} ${attr}; } | egrep --max-count=1 ${grepctx["$i"]} "${sig[$i]}" | grep -v "^$" |
+                   get_log ${over} ${attr} | egrep --max-count=1 ${grepctx["$i"]} "${sig[$i]}" \
+			| grep -v "^$\|^builder for ‘/nix/store/\|^error: build of ‘/nix/store/" |
                            { if test -n "${no_state_change}"
                              then cat
                              else tee $(path ${FAILLOGTY} ${over} ${attr})
@@ -656,7 +660,7 @@ emit_property_override() {
         propName="$1"
         eval "${propName}=\"$(get_def def/over ${propName} ${attr})\""
         eval propVal=\$$propName
-        if test ! -z "${propVal}"
+        if test ! -z "${propVal}" && ! has def/meta disable.${propName} ${attr}
         then
                 emit_explanation ${propName} ${attr} | sed 's/^/    ## /'
                 if test ! -z "${REQUIRE_DESC}" -a ${PIPESTATUS[0]} != 0
@@ -703,10 +707,10 @@ emit_override() {
         local attr="$1"
         local base_attr=""
 
-        if test -z "$(lsattrs def/over ${attr})" || get def/meta disable "${attr}" >/dev/null
+        if test -z "$(lsattrs def/over ${attr})" ||   has def/meta disable     "${attr}"
         then return
         fi
-        if test_shadowed "${attr}"
+        if test_shadowed "${attr}"               && ! has def/meta disable.src "${attr}"
 	then shadowed=yes; base_attr="$(shadow_name ${attr})"
         else shadowed=;    base_attr="${attr}"
         fi
@@ -825,31 +829,14 @@ cache_gen_override_one() {
         then fail "failed to compute override for ${attr}"
         fi
 }
-cache_copy() {
-        local FIELD_FROM="$1"; shift
-        local FIELD_TO="$1";   shift
 
-        pushd ${PKGDB}/cache >/dev/null
-        for from in *.${FIELD_FROM}
-        do
-                to="$(echo $from | sed 's/^\(.*\)\.[^\.]*$/\1/')".${FIELD_TO}
-                cp -f "${from}" "${to}"
-        done
-	popd >/dev/null
-}
-cache_drop() {
-        FIELD="$1"
-        rm -f ${PKGDB}/cache/*.${FIELD}
-}
 coherently() {
-        local overrides=overrides.nix
         local reuse_cache=
         local reuse_overrides=
         local require_desc=
         while test $# -ge 1
         do case "$1"
-           in --overrides )            overrides="$2"; shift;;
-              --reuse-cache )          reuse_cache="--reuse-cache";;
+           in --reuse-cache )          reuse_cache="--reuse-cache";;
               --reuse-overrides )      reuse_overrides="--reuse-overrides";;
               --require-desc )         require_desc="--require-desc";;
               "--"* )                  fail "$0: unknown option: $1";;
@@ -870,13 +857,29 @@ coherently() {
 	# Record the overall expression used.
         if test ${over} = "baseline"
         then if test -z "${reuse_overrides}"
-             then emit_overrides ${reuse_cache} | tee ${PKGDB}/${EXPRTY}/baseline        > ${overrides}
-             else cp -f ${overrides}                  ${PKGDB}/${EXPRTY}/baseline
+             then emit_overrides ${reuse_cache} | tee ${PKGDB}/${EXPRTY}/baseline        > ${NIX_GHC_OVERRIDES}
+             else cp -f ${NIX_GHC_OVERRIDES}          ${PKGDB}/${EXPRTY}/baseline
              fi
-        else      emit_overrides ${reuse_cache} | tee ${PKGDB}/${EXPRTY}/${attr}.${over} > ${overrides}
+        else      emit_overrides ${reuse_cache} | tee ${PKGDB}/${EXPRTY}/${attr}.${over} > ${NIX_GHC_OVERRIDES}
         fi
 
         "$@"
+}
+cache_copy() {
+        local FIELD_FROM="$1"; shift
+        local FIELD_TO="$1";   shift
+
+        pushd ${PKGDB}/cache >/dev/null
+        for from in *.${FIELD_FROM}
+        do
+                to="$(echo $from | sed 's/^\(.*\)\.[^\.]*$/\1/')".${FIELD_TO}
+                cp -f "${from}" "${to}"
+        done
+	popd >/dev/null
+}
+cache_drop() {
+        FIELD="$1"
+        rm -f ${PKGDB}/cache/*.${FIELD}
 }
 
 override_builder() {
@@ -892,9 +895,9 @@ override_builder() {
         local over="$1"; shift
 
         ###
-        ### 1. evaluate
+        ### 1. Instantiate
         ###
-        local store_drv="$(instantiate ${attr})"
+        local store_drv="$(do_instantiate ${attr})"
 	local status=$?
 	if test ${status} = 0 -a -n "${store_drv}"
 	then
@@ -903,39 +906,35 @@ override_builder() {
         	local store_src="$(drv_src ${over} ${attr})"
 	        rm -f            ${PKGDB}/${SRCTY}/${attr}.${over}
 	        ln -s $store_src ${PKGDB}/${SRCTY}/${attr}.${over}
-
-                _set ${FAILTYTY} ${over} ${attr} ""
 	else
-		{ instantiate ${attr} 2>&1 || true; } |
-    			set_stdin          ${LOGTY} ${over} ${attr}.instantiate
+		{ do_instantiate ${attr} 2>&1 || true; } |
+    			set_stdin          ${LOGTY} ${over} ${attr}
                 echo "FATAL: failed to instantiate '${attr}', without overriding '${over}'" >&2
-                echo "FATAL: logs:  nh get ${LOGTY} ${over} ${attr}.instantiate" >&2
-                _set ${FAILTYTY} ${over} ${attr} INSTANTIATE
+                echo "FATAL: logs:  nh get ${LOGTY} ${over} ${attr}" >&2
+                _set ${FAILTYTY} ${over} ${attr} "INSTANTIATE"
+                _set ${FAILTY}   ${over} ${attr} "INSTANTIATE"
+		## TODO:  invoke the loop hunter?
                 return 1
 	fi
 
         ###
         ### 2. prebuild context
         ###
-        echo -n      "$(path ${LOGTY} ${over} ${attr}.prebuild)" > ${PKGDB}/current.prebuild
+        echo -n      "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
         nix-shell ${NIX_GHC_PACKAGE_SET} -A ${attr} ${NIX_BUILD_OPTIONS} --no-out-link 2>&1 \
-                | set_stdin ${LOGTY} ${over} ${attr}.prebuild
+                | set_stdin ${LOGTY} ${over} ${attr}
         local status=${PIPESTATUS[0]}
-        rm -f ${PKGDB}/current.prebuild
-        if test ${status} = 0
+        if test ${status} != 0
         then
-                _set ${FAILTY}    ${over} ${attr}.prebuild ""
-                _set ${FAILLOGTY} ${over} ${attr}.prebuild ""
-                _set ${FAILTYTY}  ${over} ${attr}.prebuild ""
-        else
-                intermediate_failure=$(get ${LOGTY} "${over}" ${attr}.prebuild | log_filter_failure)
-                echo "FATAL: failed to prebuild context for '${attr}', without overriding '${over}'" >&2
-                echo "FATAL: ..apparently due to:  ${intermediate_failure}"
-                echo "FATAL: logs:  nh get ${LOGTY} ${over} ${attr}.prebuild" >&2
-                fail_classify_one_property ${over} ${attr}.prebuild no-state-change
-                fail_classify_one_property ${over} ${attr}.prebuild no-state-change | tail -n1  | set_stdin ${FAILTYTY}  ${over} ${attr}.prebuild
-                fail_classify_one_property ${over} ${attr}.prebuild no-state-change | head -n-1 | set_stdin ${FAILLOGTY} ${over} ${attr}.prebuild
-                _set ${FAILTY} ${over} ${attr}.prebuild $intermediate_failure
+                echo "FATAL: failed to prebuild deps of '${attr}', without overriding '${over}'" >&2
+                intermediate_failure=$(get ${LOGTY} "${over}" ${attr} | log_filter_failure)
+		if test -n "${intermediate_failure}"
+		then
+                	echo "FATAL: ..apparently due to:  ${intermediate_failure}"
+                	echo "FATAL: logs:  nh get ${LOGTY} ${over} ${attr}" >&2
+		fi
+                _set ${FAILTY}   ${over} ${attr} "DEPENDENCY/${intermediate_failure:-UNKNOWN}"
+                fail_classify_one_property ${over} ${attr}
                 return 1
         fi
 
@@ -947,7 +946,7 @@ override_builder() {
                 | set_stdin ${LOGTY} ${over} ${attr}
         status=${PIPESTATUS[0]}
         rm -f ${PKGDB}/current.build
-        if test $status = 0
+        if test ${status} = 0
         then
                 _set ${SUCCTY} ${over} ${attr} $(readlink result)
                 rm -f result
@@ -957,7 +956,7 @@ override_builder() {
         else
                 echo "FATAL: failed to build '${attr}', without overriding '${over}'" >&2
                 echo "FATAL: logs:  nh get ${LOGTY} ${over} ${attr}" >&2
-                _set ${FAILTY} ${over} ${attr} $status
+                _set ${FAILTY}   ${over} ${attr} "DIRECT"
                 fail_classify_one_property ${over} ${attr}
         fi
 
@@ -1004,6 +1003,25 @@ with_field_value() {
         _set "${WFV_TYPE}" "${WFV_FIELD}" "${WFV_NAME}" "${WFV_SAVE_VAL}"
         cache_gen_override_one "${WFV_NAME}"
         return $result
+}
+
+build() {
+        reuse_cache=
+        reuse_overrides=
+        while test $# -ge 1
+        do case "$1"
+           in --reuse-cache )          reuse_cache="--reuse-cache";;
+              --reuse-overrides )      reuse_overrides="--reuse-overrides";;
+              --debug )                set -x;;
+              "--"* )                  fail "$0: unknown option: $1";;
+              * )                      break;;
+           esac
+           shift
+        done
+        local attr=$1; shift
+        local over=${1:-baseline}
+
+        coherently ${reuse_cache} ${reuse_overrides} ${attr} "${over}" override_builder ${attr} "${over}"
 }
 
 execute_trim() {
@@ -1304,12 +1322,12 @@ baseline() {
         then overrides ${reuse_cache}
         fi
 
-        echo "-( validating baseline"
+        echo "-( validating baseline: all PKGDB overrides applied"
         for attr in ${ATTRSET}
         do
                 echo "--( ${attr}"
-                if ! coherently --reuse-overrides ${attr} "baseline" override_builder ${attr} "baseline"
-                then fail "baseline breaks package:  ${attr}"
+                if ! build --reuse-overrides ${attr} "baseline"
+                then fail "broken baseline package:  ${attr}"
                 fi
         done | tee ${PKGDB}/baseline.log
         return ${PIPESTATUS[0]}
@@ -1345,7 +1363,7 @@ cache() {
         if test -z "${silent}"; then echo >&2; fi
 }
 
-evaluate() {
+instantiate() {
         local reuse_cache=
         local debug=
         while test $# -ge 1
@@ -1371,7 +1389,7 @@ evaluate() {
         for attr in ${ATTRSET}
         do
                 echo -n "EVAL ${attr}> "
-                if ! instantiate ${attr}
+                if ! do_instantiate ${attr}
                 then fail "baseline breaks package:  ${attr}"
                 fi
         done | tee ${PKGDB}/baseline.log
@@ -1497,8 +1515,8 @@ loop_hunter() {
 
         cache
         for x in $loop_attributes
-        do echo "EVAL +doCheck ${x}>  with_field_value def/over doCheck $x false evaluate --reuse-cache $x"
-           if with_field_value def/over doCheck "$x" false evaluate --reuse-cache "$x"
+        do echo "EVAL +doCheck ${x}>  with_field_value def/over doCheck $x false instantiate --reuse-cache $x"
+           if with_field_value def/over doCheck "$x" false instantiate --reuse-cache "$x"
            then echo "OK +doCheck> ${x}"
            else echo "FAIL +doCheck> ${x}"
            fi
@@ -1581,7 +1599,8 @@ done
 command="$1"; shift 2>/dev/null || true
 case "${command}" in
 info | show )      info                            "$1";;      ## Overview of an attribute's PKGDB
-show-override )    emit_override "$1";;                        ## Print the override defined by PKGDB
+show-override | override | over )
+                   emit_override "$1";;                        ## Print the override defined by PKGDB
 show-cache )       get cache override "$1";;                   ## Print the cached override value
 sanity-check )     ## For internal consistency checking (non-audit-related).
                    fail "NOT-IMPLEMENTED-BUT-SORELY-NEEDED";;
@@ -1594,10 +1613,12 @@ meta )             get        def/meta  "$2" "$1";;
 set-meta )         _set       def/meta  "$2" "$1" "$3";;
 
 ## Override manipulation (low-level):
-disable )          _set       def/meta disable  "$1" true      ## Disable all overrides for an attribute
+disable )          attr="$1"; over="${2:+.$2}"
+                   _set       def/meta disable${over} "$attr" true  ## Disable all/single overrides for an attribute
                    cache_gen_override_one "$1";;
-enable )           _set       def/meta disable  "$1" ""        ## Re-enable previously disabled overrides
-                   cache_gen_override_one "$1";;               ## List/get/set/edit overrides
+enable )           attr="$1"; over="${2:+.$2}"
+                   _set       def/meta disable${over} "$attr" ""    ## Re-enable previously disabled overrides
+                   cache_gen_override_one "$1";;                    ## List/get/set/edit overrides
 ls )               lsattrs    def/over  "$1";;
 get )              get        def/over  "$2" "$1";;
 set )              _set       def/over  "$2" "$1" "$3"
@@ -1655,12 +1676,23 @@ dontJailbreak )           _set def/over jailbreak       "$1";        cache_gen_o
 chdir )                   _set def/over chdir           "$1" "$2";   cache_gen_override_one "$1";;
 extraLibs )               _set def/over extraLibs       "$1" "$2";   cache_gen_override_one "$1";;
 
+## Individual packages (high-level)
+build )            build                      "$@";;     ##  Build a single package
+log | logs )          attr="$1"; over="${2:-baseline}"; get ${LOGTY}    "${over}" ${attr};;
+fail | failure )      attr="$1"; over="${2:-baseline}"; get ${FAILTY}   "${over}" ${attr};;
+fail | failure-type ) attr="$1"; over="${2:-baseline}"; get ${FAILTYTY} "${over}" ${attr};;
+expr | expression )   attr="$1"; over="${2:-baseline}"
+                      if test "${over}" = baseline
+		      then cat ${PKGDB}/build/expr/baseline  | less --pattern=" ${attr} = "
+		      else get ${EXPRTY}   "${over}" ${attr} | less --pattern=" ${attr} = "
+		      fi;;
+
 ## Override database maintenance
-evaluate )         evaluate                   "$@";;     ##  Evaluate overridden attrs                    (or those specified)
-baseline )         baseline                   "$@";;     ##  Build overridden attrs                       (or those specified)
-trim )             trim                       "$@";;     ##  Suggest a reduction to the override set      (or its specified subset)
+instantiate )      instantiate                "$@";;     ##  Instantiate overridden attrs                 (or specified subset)
+baseline )         baseline                   "$@";;     ##  Build overridden attrs                       (or specified subset)
+trim )             trim                       "$@";;     ##  Suggest a reduction to the override set      (or specified subset)
 execute-trim )     execute_trim               "$@";;     ##  Execute the suggestion
-audit )            audit                      "$@";;     ##  Perform sanity check on the overridden attrs (or those specified)
+audit )            audit                      "$@";;     ##  Perform sanity check on the overridden attrs (or specified subset)
 
 ## ${NIX_GHC_OVERRIDES} generation
 cache )            if test -z "$*"; then cache_drop override; fi
@@ -1671,7 +1703,7 @@ overrides-descs )  overrides --require-descs;;
 ##
 ## Miscellanea
 ##
-x )                "$@";;                                ##  Passthrough, to execute anything defined.
+x | eval )         "$@";;                                ##  Passthrough, to execute anything defined.
 shell )
                    overrides "$@"
                    nix-shell --max-jobs 4 --cores 0 --keep-going;;
