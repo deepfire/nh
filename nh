@@ -161,6 +161,10 @@ if test $? != 0 -o -z "$NIXPKGS"
 then fail "Unable to find Nixpkgs:  nix-instantiate --eval -E '<nixpkgs>'"
 fi
 
+if ! type nix-prefetch-git >/dev/null
+then fail "missing tool:  nix-prefetch-git   (fix: nix-env -i nix-prefetch-scripts)"
+fi
+
 NIX_BUILD_OPTIONS="--argstr compiler ghc${GHC} --show-trace --cores 0"
 
 cons_by() {

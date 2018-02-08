@@ -21,10 +21,9 @@
 /dist/
 /cabal-dev/
 /.cabal-sandbox/
-/tests
 /tests/.nh
-/tests/packages.nix
 /tests/overrides.nix
+/tests/pkgdb
 
 .stack-work/
 nohup.out
