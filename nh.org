@@ -377,10 +377,8 @@ do_instantiate() {
 
         if !    nix-instantiate ${NIX_GHC_PACKAGE_SET} -A ${attr} --argstr compiler ghc${GHC} 2>/dev/null
         then
-                echo "FATAL:  failed to instantiate ${attr}, the repro is:" >&2
-                echo "FATAL:  nix-instantiate ${NIX_GHC_PACKAGE_SET} -A ${attr} --argstr compiler ghc${GHC} --show-trace" >&2
                 nix-instantiate ${NIX_GHC_PACKAGE_SET} -A ${attr} --argstr compiler ghc${GHC} --show-trace
-                exit 1
+                return 1
         fi
 }
 nreferrers() {
@@ -499,45 +497,41 @@ faillog() {
                 echo "WARNING: failure type UNKNOWN for:  ${attr}.${over}" >&2
                 return 1
         }
-
-	set +e
-        get ${FAILLOGTY} ${over} ${attr}.prebuild
-        local status0=$?
         get ${FAILLOGTY} ${over} ${attr}
-        local status1=$?
-	set -e
-
-        test $status0 = 0 -o $status1 = 0
 }
       #+END_SRC
 *** Classification
     #+BEGIN_SRC sh
-declare -A sig grepctx
-sig["CABAL-MISSING-DEPS"]="Setup: Encountered missing dependencies"
-sig["HASKELL-SMP-NO-INSTANCE-FOR"]="No instance for \(Semigroup"
-sig["HASKELL-SMP-COULD-NOT-DEDUCE"]="Could not deduce \(Semigroup"
-sig["HASKELL-SMP-APPEND-CONFLICT"]="Ambiguous occurrence ‘<>’"
-sig["HASKELL-SMP-NO-INSTANCE-IMPL-FOR"]="No instance nor default method for class operation <>"
-sig["HASKELL-SMP-VERSION"]="Module ‘Data.Semigroup’ does not export ‘"
-sig["GHC-BUG"]="Please report this as a GHC bug"
-sig["CABAL-NOT-FOUND"]="/bin/sh: cabal: command not found"
-sig["NO-SUCH-FILE-OR-DIRECTORY"]=": No such file or directory"
-sig["NIX-ERROR-EVAL-OVERRIDECABAL"]="error: while evaluating ‘overrideCabal’"
-sig["JAILBREAK-CABAL-MISSING-CABAL"]="jailbreak-cabal: dieVerbatim: user error \(jailbreak-cabal: Error Parsing: file "
-sig["CABAL-CONFIGURE-MISSING-PROGRAM"]="Setup: The program '[A-Za-z-]*' is required but it could not be found"
-sig["NIX-MISSING-ATTRIBUTE"]="error: attribute ‘[A-Za-z-]*’ in selection path ‘[A-Za-z-]*’ not found"
-sig["HASKELL-MISSING-EXPORT"]="Module ‘[A-Za-z-]*’ does not export ‘"
-sig["HASKELL-AMBIGUOUS-TYPE-VARIABLE-ERROR"]="Ambiguous type variable"
-sig["HASKELL-TYPE-ERROR"]="Couldn't match expected type"
-sig["HASKELL-MISSING-INSTANCE"]="No instance for \("
-sig["HASKELL-CONTEXT-NOT-SATISFIED"]="Could not deduce \("
-sig["HASKELL-MISSING-MODULE"]="Could not find module ‘"
-sig["HASKELL-VAR-NOT-IN-SCOPE"]="Variable not in scope:"
-sig["CURL-404"]="The requested URL returned error: 404 Not Found"
-sig["NO-SUCH-FILE-OR-DIRECTORY"]="No such file or directory"
-sig["NO-CABAL-FILE-FOUND"]="Setup: No cabal file found"
-sig["TH-RUNTIME-EXCEPTION"]="Exception when trying to run compile-time code:"
-
+declare -a keysig
+keysig=(
+"CABAL-MISSING-DEPS||||Setup: Encountered missing dependencies"
+"HASKELL-SMP-NO-INSTANCE-FOR||||No instance for \(Semigroup"
+"HASKELL-SMP-COULD-NOT-DEDUCE||||Could not deduce \(Semigroup"
+"HASKELL-SMP-APPEND-CONFLICT||||Ambiguous occurrence ‘<>’"
+"HASKELL-SMP-NO-INSTANCE-IMPL-FOR||||No instance nor default method for class operation <>"
+"HASKELL-SMP-VERSION||||Module ‘Data.Semigroup’ does not export ‘"
+"GHC-BUG||||Please report this as a GHC bug"
+"CABAL-NOT-FOUND||||/bin/sh: cabal: command not found"
+"NO-SUCH-FILE-OR-DIRECTORY||||: No such file or directory"
+"NIX-ERROR-EVAL-OVERRIDECABAL||||error: while evaluating ‘overrideCabal’"
+"JAILBREAK-CABAL-MISSING-CABAL||||jailbreak-cabal: dieVerbatim: user error \(jailbreak-cabal: Error Parsing: file "
+"CABAL-CONFIGURE-MISSING-PROGRAM||||Setup: The program '[A-Za-z-]*' is required but it could not be found"
+"NIX-MISSING-ATTRIBUTE||||error: attribute ‘[A-Za-z-]*’ in selection path ‘[A-Za-z-]*’ not found"
+"HASKELL-MISSING-EXPORT||||Module ‘[A-Za-z-]*’ does not export ‘"
+"HASKELL-AMBIGUOUS-TYPE-VARIABLE-ERROR||||Ambiguous type variable"
+"HASKELL-TYPE-ERROR||||Couldn't match expected type"
+"HASKELL-MISSING-INSTANCE||||No instance for \("
+"HASKELL-CONTEXT-NOT-SATISFIED||||Could not deduce \("
+"HASKELL-MISSING-MODULE||||Could not find module ‘"
+"HASKELL-VAR-NOT-IN-SCOPE||||Variable not in scope:"
+"CURL-404||||The requested URL returned error: 404 Not Found"
+"NO-SUCH-FILE-OR-DIRECTORY||||No such file or directory"
+"NO-CABAL-FILE-FOUND||||Setup: No cabal file found"
+"TH-RUNTIME-EXCEPTION||||Exception when trying to run compile-time code:"
+"INSTANTIATE-INFINITE-RECURSION||||infinite recursion encountered, at undefined"
+"INSTANTIATE-GENERIC||||error: while evaluating the attribute"
+)
+declare -A grepctx
 grepctx["CABAL-MISSING-DEPS"]="-A5"
 grepctx["HASKELL-SMP-NO-INSTANCE-FOR"]="-A2"
 grepctx["HASKELL-SMP-COULD-NOT-DEDUCE"]="-A2"
@@ -549,20 +543,23 @@ grepctx["HASKELL-MISSING-INSTANCE"]="-A2"
 grepctx["HASKELL-CONTEXT-NOT-SATISFIED"]="-A2"
 grepctx["CURL-404"]="-A1"
 grepctx["TH-RUNTIME-EXCEPTION"]="-B1 -A7"
+grepctx["INSTANTIATE-INFINITE-RECURSION"]="-B10"
+grepctx["INSTANTIATE-GENERIC"]="-A7"
 
 fail_classify_one_property() {
         local over="$1";      shift
         local attr="$1";      shift
         local no_state_change="$1"
 
-        for i in "${!sig[@]}"
-        do if      get_log ${over} ${attr} | egrep --max-count=1                  "${sig[$i]}" >/dev/null 2>&1
+        for ks in "${keysig[@]}"
+        do key="${ks%%||||*}"; sig="${ks#*||||}"
+           if      get_log ${over} ${attr} | egrep --max-count=1 -q                 "${sig}"
            then
-                   echo ${i}
+                   echo "${key}"
                    if test -z "${no_state_change}"
-                   then _set ${FAILTYTY} ${over} ${attr} "$i"
+                   then _set ${FAILTYTY} ${over} ${attr} "${key}"
                    fi
-                   get_log ${over} ${attr} | egrep --max-count=1 ${grepctx["$i"]} "${sig[$i]}" \
+                   get_log ${over} ${attr} | egrep --max-count=1 ${grepctx["${key}"]} "${sig}" \
 			| grep -v "^$\|^builder for ‘/nix/store/\|^error: build of ‘/nix/store/" |
                            { if test -n "${no_state_change}"
                              then cat
@@ -968,8 +965,8 @@ override_builder() {
     			set_stdin          ${LOGTY} ${over} ${attr}
                 echo "FATAL: failed to instantiate '${attr}', without overriding '${over}'" >&2
                 echo "FATAL: logs:  nh get ${LOGTY} ${over} ${attr}" >&2
-                _set ${FAILTYTY} ${over} ${attr} "INSTANTIATE"
                 _set ${FAILTY}   ${over} ${attr} "INSTANTIATE"
+                fail_classify_one_property ${over} ${attr}
 		## TODO:  invoke the loop hunter?
                 return 1
 	fi
@@ -1106,23 +1103,29 @@ execute_trim() {
                 done
         done
 }
+trim_single_property() {
+        local attr="$1"; shift
+        local over="$1"; shift
+
+        echo -n "TRIM ${attr} -${over}>  "
+        if has def/meta "${over}.explanation" "${attr}"
+        then echo "SKIPPED, explanation exists:  nh x emit_explanation ${over} ${attr}"
+        elif with_field_value def/over "${over}" "${attr}" ""     coherently --reuse-cache ${attr} "${over}" override_builder ${attr} ${over}
+        then echo "OK: $(get ${SUCCTY} ${over} ${attr})"
+        else echo "FAILED"
+        fi
+}
 trim_one() {
         local attr="$1";   shift
 
         echo -n "TRIM ${attr} -all>  "
-        if    with_field_value def/meta         "disable" "${attr}" "true" coherently --reuse-cache ${attr} "default" override_builder ${attr} "default"
+        if   with_field_value def/meta "disable" "${attr}" "true" coherently --reuse-cache ${attr} "default" override_builder ${attr} "default"
         then echo "OK: $(get ${SUCCTY} default ${attr})"
         else echo "FAILED"
         fi
 
         for over in $(lsattrs def/over ${attr})
-        do echo -n "TRIM ${attr} -${over}>  "
-           if has def/meta "${over}.explanation" "${attr}"
-           then echo "SKIPPED, explanation exists:  nh x emit_explanation ${over} ${attr}"
-           elif with_field_value def/over "${over}" "${attr}" ""     coherently --reuse-cache ${attr} "${over}" override_builder ${attr} ${over}
-           then echo "OK: $(get ${SUCCTY} ${over} ${attr})"
-           else echo "FAILED"
-           fi
+        do trim_single_property ${attr} ${over}
         done
 }
 #+END_SRC
@@ -1697,8 +1700,6 @@ show-override | override | over )
 show-cache )       get cache override "$1";;                   ## Print the cached override value
 sanity-check )     ## For internal consistency checking (non-audit-related).
                    fail "NOT-IMPLEMENTED-BUT-SORELY-NEEDED";;
-explain )          attr="$1"; over="$2";
-                   emit_explanation "${over}" "${attr}";;
 
 ## Meta manupulation:                                          ## List/get/set non-directly-overriding properties
 ls-meta )          lsattrs    def/meta  "$1";;
@@ -1770,20 +1771,24 @@ chdir )                   _set def/over chdir           "$1" "$2";   cache_gen_o
 extraLibs )               _set def/over extraLibs       "$1" "$2";   cache_gen_override_one "$1";;
 
 ## Individual packages (high-level)
-build )            build                      "$@";;     ##  Build a single package
-log | logs )          attr="$1"; over="${2:-baseline}"; get ${LOGTY}    "${over}" ${attr};;
-fail | failure )      attr="$1"; over="${2:-baseline}"; get ${FAILTY}   "${over}" ${attr};;
-fail | failure-type ) attr="$1"; over="${2:-baseline}"; get ${FAILTYTY} "${over}" ${attr};;
-expr | expression )   attr="$1"; over="${2:-baseline}"
-                      if test "${over}" = baseline
-		      then cat ${PKGDB}/build/expr/baseline  | less --pattern=" ${attr} = "
-		      else get ${EXPRTY}   "${over}" ${attr} | less --pattern=" ${attr} = "
-		      fi;;
+build )                   build                         "$@";;     ##  Build a single package
+log | logs )              attr="$1"; over="${2:-baseline}"; get ${LOGTY}    "${over}" ${attr};;
+fail | failure )          attr="$1"; over="${2:-baseline}"; get ${FAILTY}   "${over}" ${attr};;
+failty | failure-type )   attr="$1"; over="${2:-baseline}"; get ${FAILTYTY} "${over}" ${attr};;
+faillog | failure-log )   attr="$1"; over="$2";             faillog "${over}" "${attr}";;
+expr | expression )       attr="$1"; over="${2:-baseline}"
+                          if test "${over}" = baseline
+		          then cat ${PKGDB}/build/expr/baseline  | less --pattern=" ${attr} = "
+		          else get ${EXPRTY}   "${over}" ${attr} | less --pattern=" ${attr} = "
+		          fi;;
+proof )                   attr="$1"; over="$2";
+                          emit_explanation "${over}" "${attr}";;
 
 ## Override database maintenance
 instantiate )      instantiate                "$@";;     ##  Instantiate overridden attrs                 (or specified subset)
 baseline )         baseline                   "$@";;     ##  Build overridden attrs                       (or specified subset)
 trim )             trim                       "$@";;     ##  Suggest a reduction to the override set      (or specified subset)
+trim-single )      trim_single_property       "$@";;     ##  Attempt trimming a specific override of a given attribute
 execute-trim )     execute_trim               "$@";;     ##  Execute the suggestion
 audit )            audit                      "$@";;     ##  Perform sanity check on the overridden attrs (or specified subset)
 
@@ -1813,9 +1818,7 @@ loop-hunter )      ## Detect attribute loops in the message stream of Nix evalua
                    loop_hunter;;                         ##  Use like:  nix-shell 2>&1 | nh loop-hunter
 
 watch )            ## Observe the current build, as it goes..
-                   if   test -f "$(cat ${PKGDB}/current.prebuild 2>/dev/null)"
-                   then      log=$(cat ${PKGDB}/current.prebuild 2>/dev/null)
-                   elif test -f "$(cat ${PKGDB}/current.build    2>/dev/null)"
+                   if   test -f "$(cat ${PKGDB}/current.build    2>/dev/null)"
                    then      log=$(cat ${PKGDB}/current.build    2>/dev/null)
                    else fail "Nothing to watch, exiting."
                    fi
