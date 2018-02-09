@@ -117,7 +117,7 @@ WORKING=data-default
 BROKEN_SHADOWED=vector-space
 x nh disable        ${BROKEN_SHADOWED}
 x nh set-upstream   ${BROKEN_SHADOWED} conal
-q nh hackage-up     ${BROKEN_SHADOWED}
+q nh hackage        ${BROKEN_SHADOWED}
 
 BROKEN_UNMERGED=composition-tree
 x nh dontCheck      ${BROKEN_UNMERGED}

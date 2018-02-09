@@ -166,3 +166,109 @@
       - hackage, github :: src-specific information, per-attribute-override
     - cache :: override cache, per-attribute
     - build :: build output information: logs, expressions, derivations
+
+* Appendix: help
+
+#+BEGIN_SRC
+Usage:  nh [--cls] [--trace] [--debug] SUBCMD [SUBARGS..]
+
+  General:
+
+   info ATTR                 Overview of an attribute's PKGDB
+
+  Metadata manipulation:
+
+   ls-meta ATTR              List attribute's metadata (as opposed to overrides
+   meta ATTR META            Print a single metadata entry of an attribute
+   set-meta ATTR META VAL    Set a single metadata entry of an attribute
+
+  Override manipulation (low level):
+
+   disable ATTR[.OVER]       Disable all/single overrides for an attribute
+   enable ATTR[.OVER]        Re-enable previously disabled overrides
+   set-explanation ATTR OVER Provide a manual explanation for an override's existence
+   ls ATTR                   List attribute's overrides
+   get ATTR OVER             Get an attribute's override value
+   set ATTR OVER VAL         Set an attribute's override value;  "" removes the override
+   edit ATTR OVER            Edit the current attribute's value using readline
+   edit ATTR OVER            Edit the current attribute's value using readline
+   check ATTR                Disable an existing dontCheck override
+   dontCheck ATTR            Disable tests
+   haddock ATTR              Disable an existing dontHaddock override
+   dontHaddock ATTR          Disable Haddock generation
+   jailbreak ATTR            Turn on jailbreaking
+   dontJailbreak ATTR        Disable an existing jailbreak override
+   chdir ATTR SUBDIR         Change directory before build;  "" removes the override
+   extraLibs ATTR '[ .. ]'   Specify extra dependencies;  "" removes the override
+
+  Attribute status classification:
+
+   status ATTR               Print status of a single attribute
+   ls-shadowed               List all attributes with status 'shadowed'
+   ls-hackaged                                            ...'hackaged'
+   ls-upstreamed                                          ...'upstreamed'
+   ls-unmerged                                            ...'unmerged'
+   ls-config                                              ...'config'
+
+  Override manipulation (high-level):
+
+   hackage ATTR [RELEASE=upstream-latest]
+                             Set the source override to a Hackage release
+   unmerged ATTR USER PR# [REV=HEAD]
+                             Set the source override to a 3rd-party Github commit
+   upstream ATTR [REV=HEAD]  Set the source override to an upstream Github commit
+
+  Github-based (unmerged/upstream) override manipulation:
+
+   github-up ATTR            Bump a Github override to its latest HEAD
+   set-pr ATTR PR#           Set the PR# of an attribute's Github override
+   set-upstream ATTR GITHUB-USER
+                             Specify an attribute's Github upstream username
+   set-repoName ATTR REPO    Set an attribute's Github repository name
+
+  Build & results:
+
+   build [COMMON-OPTS] ATTR  Build a single attribute
+   log ATTR [OVER=baseline]  Obtain trim build logs for a single override
+   failure ATTR [OVER=baseline]
+                             Obtain trim failure kind of an override
+   failure-type ATTR [OVER=baseline]
+                             Obtain trim failure type of an override
+   failure-log ATTR [OVER=baseline]
+                             Obtain trim failure log of an override
+   expression ATTR [OVER=baseline]
+                             See the the expression defining an override's trim
+   proof ATTR OVER           Print the proof of necessity for an attribute's override
+
+  Override database maintenance:
+
+   instantiate [--reuse-cache] [ATTR..]
+                             Instantiate overridden attrs (or specified subset)
+   baseline [--reuse-{overrides,cache}] [ATTR..]
+                             Build overridden attrs (or specified subset)
+   trim [--skip-baseline] [--reuse-cache] [ATTR..]
+                             Suggest a reduction to the override set (or specified subset)
+   trim-single ATTR OVER     Attempt trimming a specific override of a given attribute
+   show-trims                Show the trim suggestion
+   execute-trims             Execute the suggestion
+   audit [--skip-baseline] [--reuse-{overrides,cache}] [ATTR]
+                             Perform sanity check on the overridden attrs (or specified subset)
+
+  Generation of overrides:
+
+   over | override | show-override ATTR
+                             Print the attribute's override defined by PKGDB
+   overrides [--reuse-cache] Generate overrides.nix
+   overrides-descs           As overrides, but mandate that every override comes with a proof
+   cache [--require-descs]   Regenerate override cache
+   show-cache ATTR           Print the cached text of attribute's override (DEBUG)
+
+  Miscellanea:
+
+   eval 'BASH-EXPR'          Passthrough, to execute anything defined.
+   shell                     Nix shell with up-to-date overrides (shell.nix required)
+   cabal2shell               Nix shell from a cabal file (nothing else required)
+   loop-hunter               Detect attribute loops:  nix-shell 2>&1 | nh loop-hunter
+   watch                     Observe the current build, as it hits the logs..
+
+#+END_SRC
