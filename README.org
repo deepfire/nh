@@ -176,6 +176,7 @@ Usage:  nh [--cls] [--trace] [--debug] SUBCMD [SUBARGS..]
 
    ls [REGEX]                List all overridden attributes
    info ATTR                 Overview of an attribute's PKGDB
+   overview                  List overridden attributes, grouped by status + relevant info
 
   Metadata manipulation:
 

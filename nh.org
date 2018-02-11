@@ -1218,6 +1218,19 @@ function V() # $1-a $2-op $3-$b
     * )         [ "$a" $op "$b" ] ;;
   esac
 }
+test_suggested_by_trim() {
+        over=$1; shift
+        attr=$1; shift
+        has ${SUCCTY} ${over} ${attr}
+}
+attrs_suggested_by_trim() {
+        attr=$1; shift
+        for over in $(lsattrs def/over ${attr})
+        do if test_suggested_by_trim ${over} ${attr}
+           then echo ${over}
+           fi
+        done
+}
 audit_one() {
         local autofix=
         while test $# -ge 1
@@ -1239,7 +1252,7 @@ audit_one() {
         do if ! emit_explanation ${over} ${attr} >/dev/null
            then
 			warn      "${attr}.${over}" "no proof:  nh x emit_explanation ${over} ${attr}"; status=1
-			if has ${SUCCTY} ${over} ${attr}
+			if test_suggested_by_trim ${over} ${attr}
 			then warn "${attr}.${over}" "*** already suggested for trimming ***"
 			else warn "${attr}.${over}" "retrim:    nh trim --skip-baseline ${attr}"
 			fi
@@ -1608,6 +1621,11 @@ EOF
 essential revdeps: $(get def/meta erdeps ${attr} | xargs echo)
 EOF
                    fi
+                   if test -n "$(attrs_suggested_by_trim ${attr})"
+                   then cat <<EOF
+ trim suggestions: $(attrs_suggested_by_trim ${attr})
+EOF
+                   fi
 }
 show() {
         local NAME="$1"
@@ -1781,13 +1799,35 @@ command_dispatch() {
 help | "" )        print_help general meta overman status overhigh github build nix maintain generate miscellanea;;
 
 section-general )
-section "General" ls info;;
+section "General" ls info overview;;
 
 ls )               HELP "ls [REGEX]"               "List all overridden attributes" || return 0
                    _ls | grep "$1";;
 
 info | show )      HELP "info ATTR"                "Overview of an attribute's PKGDB" || return 0
                    info                            "$1";;
+
+overview )         HELP "overview"                 "List overridden attributes, grouped by status + relevant info" || return 0
+                   for status in shadowed hackaged upstreamed unmerged config
+                   do
+                           cat <<EOF
+
+## ${status}
+##
+EOF
+                           for attr in $(filter test_is "$status" status)
+                           do echo $attr
+                              case $status in
+                                hackaged )   echo "  upstream: $(get_upstream_release ${attr})"; echo "  nixpkgs: $(get_nixpkgs_release ${attr})";;
+                                upstreamed ) echo "  upstream: $(get_upstream_release ${attr})"; echo "  nixpkgs: $(get_nixpkgs_release ${attr})"; echo "  commits: $(url upstream-commits ${attr})";;
+                                unmerged )   echo "  upstream: $(get_upstream_release ${attr})"; echo "  nixpkgs: $(get_nixpkgs_release ${attr})"; echo "  PR: $(url upstream-pull-request ${attr})";;
+                              esac
+                              trs="$(attrs_suggested_by_trim ${attr})"
+                              if test -n "${trs}"
+                              then echo "  trim suggestions: ${trs}"
+                              fi
+                           done
+                   done;;
 
 sanity-check )     # HELP "sanity-check"       "Internal consistency checking (non-audit-related)" || return 0;;
                    fail "NOT-IMPLEMENTED-BUT-SORELY-NEEDED";;
