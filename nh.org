@@ -495,6 +495,7 @@ faillog() {
 
         test "$(get ${FAILTYTY} ${over} ${attr})" != UNKNOWN || {
                 echo "WARNING: failure type UNKNOWN for:  ${attr}.${over}" >&2
+                echo "WARNING: analyse (and maybe populate 'keysig'):  nh log ${attr} ${over}" >&2
                 return 1
         }
         get ${FAILLOGTY} ${over} ${attr}
@@ -530,6 +531,7 @@ keysig=(
 "TH-RUNTIME-EXCEPTION||||Exception when trying to run compile-time code:"
 "INSTANTIATE-INFINITE-RECURSION||||infinite recursion encountered, at undefined"
 "INSTANTIATE-GENERIC||||error: while evaluating the attribute"
+"HADDOCK-INTERNAL-ERROR||||haddock: internal error:"
 )
 declare -A grepctx
 grepctx["CABAL-MISSING-DEPS"]="-A5"
@@ -545,6 +547,7 @@ grepctx["CURL-404"]="-A1"
 grepctx["TH-RUNTIME-EXCEPTION"]="-B1 -A7"
 grepctx["INSTANTIATE-INFINITE-RECURSION"]="-B10"
 grepctx["INSTANTIATE-GENERIC"]="-A7"
+grepctx["HADDOCK-INTERNAL-ERROR"]="-A7"
 
 fail_classify_one_property() {
         local over="$1";      shift
