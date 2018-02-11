@@ -13,8 +13,8 @@ fi
 DEFAULT_GHC=841  ## The value is actually configured, so this is for the absolute defaults.
 
 #+end_src
-* Library
-*** Basis
+* Basis
+*** Failing properly
   #+begin_src sh
 backtrace() {
   if [ ${#FUNCNAME[@]} -gt 2 ]
@@ -39,9 +39,51 @@ fail() { echo "FATAL: $*" >&2; backtrace; exit 1;
        }
 fail_untraced() { echo "FATAL: $*" >&2; exit 1;
        }
+  #+end_src
+*** Misc cleanup routines
+  #+begin_src sh
+ATEXIT_REMOVE_FILES=
+atexit_remove_files() {
+	rm -f ${ATEXIT_REMOVE_FILES}
+}
+  #+END_SRC
+*** Functional
+    #+BEGIN_SRC sh
+cons_by() {
+        local attr="$1"; shift
+
+        echo -n "${attr} "
+        "$@" ${attr}
+}
+test_is() {
+        local VALUE="$1"; shift
+        test "$($*)" = "${VALUE}"
+}
+map() {
+        local ACTION="$1"; shift
+        for x in "$@"
+        do ${ACTION} "$x"
+        done
+}
+map1() {
+        local ACTION="$1"; shift
+        local ARG1="$1";  shift
+        for x in "$@"
+        do ${ACTION} "${ARG1}" "$x"
+        done
+}
+map2() {
+        local ACTION="$1"; shift
+        local ARG1="$1";  shift
+        local ARG2="$1";  shift
+        for x in "$@"
+        do ${ACTION} "${ARG1}" "${ARG2}" "$x"
+        done
+}
 when() { local pred="$1"; shift; if test -n "${pred}"; then "$@"; fi
        }
-  #+end_src
+    #+END_SRC
+* Early init
 *** Ensure config and PKGDB exist
 #+BEGIN_SRC sh
 init_pkgdb() {
@@ -178,40 +220,7 @@ fi
 
 NIX_BUILD_OPTIONS="--argstr compiler ghc${GHC} --show-trace --cores 0"
 #+END_SRC
-*** Functional
-    #+BEGIN_SRC sh
-cons_by() {
-        local attr="$1"; shift
-
-        echo -n "${attr} "
-        "$@" ${attr}
-}
-test_is() {
-        local VALUE="$1"; shift
-        test "$($*)" = "${VALUE}"
-}
-map() {
-        local ACTION="$1"; shift
-        for x in "$@"
-        do ${ACTION} "$x"
-        done
-}
-map1() {
-        local ACTION="$1"; shift
-        local ARG1="$1";  shift
-        for x in "$@"
-        do ${ACTION} "${ARG1}" "$x"
-        done
-}
-map2() {
-        local ACTION="$1"; shift
-        local ARG1="$1";  shift
-        local ARG2="$1";  shift
-        for x in "$@"
-        do ${ACTION} "${ARG1}" "${ARG2}" "$x"
-        done
-}
-    #+END_SRC
+* Library
 *** PKGDB operations
     #+BEGIN_SRC sh
 path() {
@@ -278,21 +287,6 @@ set_stdin() {
         cat > ${PKGDB}/${TYPE}/${NAME}.${FIELD}
 }
     #+END_SRC
-*** Selection
-    #+BEGIN_SRC sh
-by() {
-        local TYPE="$1"
-        local FIELD="$2"
-        local VALUE="$3"
-        shift 3
-
-        for x in $(_ls ${TYPE})
-        do if test "$(get ${TYPE} ${FIELD} $x)" = "${VALUE}"
-           then echo $x
-           fi
-        done
-}
-    #+END_SRC
 *** Pure queries
     #+BEGIN_SRC sh
 attrName() {
@@ -337,6 +331,21 @@ test_shadowed() {
         local attr="$1";        shift
 
         test_shadow_exists "${attr}" && ! has def/meta suppress-shadow "${attr}" ## XXX: re-use the 'disable' mechanism
+}
+    #+END_SRC
+*** Selection
+    #+BEGIN_SRC sh
+by() {
+        local TYPE="$1"
+        local FIELD="$2"
+        local VALUE="$3"
+        shift 3
+
+        for x in $(_ls ${TYPE})
+        do if test "$(get ${TYPE} ${FIELD} $x)" = "${VALUE}"
+           then echo $x
+           fi
+        done
 }
     #+END_SRC
 *** Log filtering
@@ -501,81 +510,6 @@ faillog() {
         get ${FAILLOGTY} ${over} ${attr}
 }
       #+END_SRC
-*** Classification
-    #+BEGIN_SRC sh
-declare -a keysig
-keysig=(
-"CABAL-MISSING-DEPS||||Setup: Encountered missing dependencies"
-"HASKELL-SMP-NO-INSTANCE-FOR||||No instance for \(Semigroup"
-"HASKELL-SMP-COULD-NOT-DEDUCE||||Could not deduce \(Semigroup"
-"HASKELL-SMP-APPEND-CONFLICT||||Ambiguous occurrence ‘<>’"
-"HASKELL-SMP-NO-INSTANCE-IMPL-FOR||||No instance nor default method for class operation <>"
-"HASKELL-SMP-VERSION||||Module ‘Data.Semigroup’ does not export ‘"
-"GHC-BUG||||Please report this as a GHC bug"
-"CABAL-NOT-FOUND||||/bin/sh: cabal: command not found"
-"NO-SUCH-FILE-OR-DIRECTORY||||: No such file or directory"
-"NIX-ERROR-EVAL-OVERRIDECABAL||||error: while evaluating ‘overrideCabal’"
-"JAILBREAK-CABAL-MISSING-CABAL||||jailbreak-cabal: dieVerbatim: user error \(jailbreak-cabal: Error Parsing: file "
-"CABAL-CONFIGURE-MISSING-PROGRAM||||Setup: The program '[A-Za-z-]*' is required but it could not be found"
-"NIX-MISSING-ATTRIBUTE||||error: attribute ‘[A-Za-z-]*’ in selection path ‘[A-Za-z-]*’ not found"
-"HASKELL-MISSING-EXPORT||||Module ‘[A-Za-z-]*’ does not export ‘"
-"HASKELL-AMBIGUOUS-TYPE-VARIABLE-ERROR||||Ambiguous type variable"
-"HASKELL-TYPE-ERROR||||Couldn't match expected type"
-"HASKELL-MISSING-INSTANCE||||No instance for \("
-"HASKELL-CONTEXT-NOT-SATISFIED||||Could not deduce \("
-"HASKELL-MISSING-MODULE||||Could not find module ‘"
-"HASKELL-VAR-NOT-IN-SCOPE||||Variable not in scope:"
-"CURL-404||||The requested URL returned error: 404 Not Found"
-"NO-SUCH-FILE-OR-DIRECTORY||||No such file or directory"
-"NO-CABAL-FILE-FOUND||||Setup: No cabal file found"
-"TH-RUNTIME-EXCEPTION||||Exception when trying to run compile-time code:"
-"INSTANTIATE-INFINITE-RECURSION||||infinite recursion encountered, at undefined"
-"INSTANTIATE-GENERIC||||error: while evaluating the attribute"
-"HADDOCK-INTERNAL-ERROR||||haddock: internal error:"
-)
-declare -A grepctx
-grepctx["CABAL-MISSING-DEPS"]="-A5"
-grepctx["HASKELL-SMP-NO-INSTANCE-FOR"]="-A2"
-grepctx["HASKELL-SMP-COULD-NOT-DEDUCE"]="-A2"
-grepctx["HASKELL-SMP-APPEND-CONFLICT"]="-A2"
-grepctx["HASKELL-SMP-VERSION"]="-A2"
-grepctx["GHC-BUG"]="-B30"
-grepctx["HASKELL-TYPE-ERROR"]="-A3"
-grepctx["HASKELL-MISSING-INSTANCE"]="-A2"
-grepctx["HASKELL-CONTEXT-NOT-SATISFIED"]="-A2"
-grepctx["CURL-404"]="-A1"
-grepctx["TH-RUNTIME-EXCEPTION"]="-B1 -A7"
-grepctx["INSTANTIATE-INFINITE-RECURSION"]="-B10"
-grepctx["INSTANTIATE-GENERIC"]="-A7"
-grepctx["HADDOCK-INTERNAL-ERROR"]="-A7"
-
-fail_classify_one_property() {
-        local over="$1";      shift
-        local attr="$1";      shift
-        local no_state_change="$1"
-
-        for ks in "${keysig[@]}"
-        do key="${ks%%||||*}"; sig="${ks#*||||}"
-           if      get_log ${over} ${attr} | egrep --max-count=1 -q                 "${sig}"
-           then
-                   echo "${key}"
-                   if test -z "${no_state_change}"
-                   then _set ${FAILTYTY} ${over} ${attr} "${key}"
-                   fi
-                   get_log ${over} ${attr} | egrep --max-count=1 ${grepctx["${key}"]} "${sig}" \
-			| grep -v "^$\|^builder for ‘/nix/store/\|^error: build of ‘/nix/store/" |
-                           { if test -n "${no_state_change}"
-                             then cat
-                             else tee $(path ${FAILLOGTY} ${over} ${attr})
-                             fi; }
-                   return 0
-           fi
-        done
-        echo UNKNOWN
-        _set ${FAILTYTY} ${over} ${attr} UNKNOWN
-        return 1
-}
-    #+END_SRC
 *** Network
 ***** url
       #+BEGIN_SRC sh
@@ -670,6 +604,130 @@ github_pr_status() {
         fi
 }
 #+END_SRC
+*** Utilities
+  #+begin_src sh
+less2line() {
+        local file="$1"
+        local pattern="$2"
+        less --pattern="$2" "$1"
+}
+  #+END_SRC
+*** Versioning
+#+BEGIN_SRC sh
+function V() # $1-a $2-op $3-$b
+# Author: stepse@StackOverflow: https://stackoverflow.com/a/48487783
+# Compare a and b as version strings. Rules:
+# R1: a and b : dot-separated sequence of items. Items are numeric. The last item can optionally end with letters, i.e., 2.5 or 2.5a.
+# R2: Zeros are automatically inserted to compare the same number of items, i.e., 1.0 < 1.0.1 means 1.0.0 < 1.0.1 => yes.
+# R3: op can be '=' '==' '!=' '<' '<=' '>' '>=' (lexicographic).
+# R4: Unrestricted number of digits of any item, i.e., 3.0003 > 3.0000004.
+# R5: Unrestricted number of items.
+{
+  local a=$1 op=$2 b=$3 al=${1##*.} bl=${3##*.}
+  while [[ $al =~ ^[[:digit:]] ]]; do al=${al:1}; done
+  while [[ $bl =~ ^[[:digit:]] ]]; do bl=${bl:1}; done
+  local ai=${a%$al} bi=${b%$bl}
+
+  local ap=${ai//[[:digit:]]} bp=${bi//[[:digit:]]}
+  ap=${ap//./.0} bp=${bp//./.0}
+
+  local w=1 fmt=$a.$b x IFS=.
+  for x in $fmt; do [ ${#x} -gt $w ] && w=${#x}; done
+  fmt=${*//[^.]}; fmt=${fmt//./%${w}s}
+  printf -v a $fmt $ai$bp; printf -v a "%s-%${w}s" $a $al
+  printf -v b $fmt $bi$ap; printf -v b "%s-%${w}s" $b $bl
+
+  case $op in
+    '<='|'>=' ) [ "$a" ${op:0:1} "$b" ] || [ "$a" = "$b" ] ;;
+    * )         [ "$a" $op "$b" ] ;;
+  esac
+}
+#+END_SRC
+* Making bumps
+*** Hackage
+#+BEGIN_SRC sh
+promote_to_hackage() {
+        attr="$1"
+        release="$2"
+        upstream_master_release="$3"
+
+        if test_hackage_release "${upstream_master_release}" ${attr}
+        then hackage ${attr} "${upstream_master_release}"
+        else warn "AUTOMATIC FIX STALLED: github release version (${upstream_master_release}) has not been put on Hackage yet"
+             echo -n "New Hackage release for ${attr}: "
+             read release
+             hackage ${attr} "${release}"
+        fi
+}
+#+END_SRC
+* Generating overrides
+*** Cache
+***** cache-gen-override-one
+      #+BEGIN_SRC sh
+cache_gen_override_one() {
+        local attr="$1"
+        local REQUIRE_DESC="$2"
+
+        emit_override ${attr} "${REQUIRE_DESC}" | set_stdin cache override ${attr}
+        if test ${PIPESTATUS[0]} != 0
+        then fail "failed to compute override for ${attr}"
+        fi
+}
+      #+END_SRC
+***** coherently
+#+BEGIN_SRC sh
+coherently() {
+        local reuse_cache=
+        local reuse_overrides=
+        local require_desc=
+        while test $# -ge 1
+        do case "$1"
+           in --reuse-cache )          reuse_cache="--reuse-cache";;
+              --reuse-overrides )      reuse_overrides="--reuse-overrides";;
+              --require-desc )         require_desc="--require-desc";;
+              "--"* )                  fail "$0: unknown option: $1";;
+              * )                      break;;
+           esac
+           shift
+        done
+
+        local attr=$1; shift
+        local over=$1; shift
+
+        emit_override ${attr} ${require_desc} | set_stdin cache override ${attr}
+        if test ${PIPESTATUS[0]} != 0
+        then fail "failed to compute override ${attr}"
+        fi
+        get cache override ${attr}
+
+	# Record the overall expression used.
+        if test ${over} = "baseline"
+        then if test -z "${reuse_overrides}"
+             then emit_overrides ${reuse_cache} | tee ${PKGDB}/${EXPRTY}/baseline        > ${NIX_GHC_OVERRIDES}
+             else cp -f ${NIX_GHC_OVERRIDES}          ${PKGDB}/${EXPRTY}/baseline
+             fi
+        else      emit_overrides ${reuse_cache} | tee ${PKGDB}/${EXPRTY}/${attr}.${over} > ${NIX_GHC_OVERRIDES}
+        fi
+
+        "$@"
+}
+cache_copy() {
+        local FIELD_FROM="$1"; shift
+        local FIELD_TO="$1";   shift
+
+        pushd ${PKGDB}/cache >/dev/null
+        for from in *.${FIELD_FROM}
+        do
+                to="$(echo $from | sed 's/^\(.*\)\.[^\.]*$/\1/')".${FIELD_TO}
+                cp -f "${from}" "${to}"
+        done
+	popd >/dev/null
+}
+cache_drop() {
+        FIELD="$1"
+        rm -f ${PKGDB}/cache/*.${FIELD}
+}
+    #+END_SRC
 *** Emission
     #+BEGIN_SRC sh
 emit_explanation() {
@@ -869,75 +927,8 @@ EOF
         echo " done." >&2
 }
     #+END_SRC
-*** Cache
-***** cache-gen-override-one
-      #+BEGIN_SRC sh
-cache_gen_override_one() {
-        local attr="$1"
-        local REQUIRE_DESC="$2"
-
-        emit_override ${attr} "${REQUIRE_DESC}" | set_stdin cache override ${attr}
-        if test ${PIPESTATUS[0]} != 0
-        then fail "failed to compute override for ${attr}"
-        fi
-}
-      #+END_SRC
-***** coherently
-#+BEGIN_SRC sh
-coherently() {
-        local reuse_cache=
-        local reuse_overrides=
-        local require_desc=
-        while test $# -ge 1
-        do case "$1"
-           in --reuse-cache )          reuse_cache="--reuse-cache";;
-              --reuse-overrides )      reuse_overrides="--reuse-overrides";;
-              --require-desc )         require_desc="--require-desc";;
-              "--"* )                  fail "$0: unknown option: $1";;
-              * )                      break;;
-           esac
-           shift
-        done
-
-        local attr=$1; shift
-        local over=$1; shift
-
-        emit_override ${attr} ${require_desc} | set_stdin cache override ${attr}
-        if test ${PIPESTATUS[0]} != 0
-        then fail "failed to compute override ${attr}"
-        fi
-        get cache override ${attr}
-
-	# Record the overall expression used.
-        if test ${over} = "baseline"
-        then if test -z "${reuse_overrides}"
-             then emit_overrides ${reuse_cache} | tee ${PKGDB}/${EXPRTY}/baseline        > ${NIX_GHC_OVERRIDES}
-             else cp -f ${NIX_GHC_OVERRIDES}          ${PKGDB}/${EXPRTY}/baseline
-             fi
-        else      emit_overrides ${reuse_cache} | tee ${PKGDB}/${EXPRTY}/${attr}.${over} > ${NIX_GHC_OVERRIDES}
-        fi
-
-        "$@"
-}
-cache_copy() {
-        local FIELD_FROM="$1"; shift
-        local FIELD_TO="$1";   shift
-
-        pushd ${PKGDB}/cache >/dev/null
-        for from in *.${FIELD_FROM}
-        do
-                to="$(echo $from | sed 's/^\(.*\)\.[^\.]*$/\1/')".${FIELD_TO}
-                cp -f "${from}" "${to}"
-        done
-	popd >/dev/null
-}
-cache_drop() {
-        FIELD="$1"
-        rm -f ${PKGDB}/cache/*.${FIELD}
-}
-    #+END_SRC
-*** Building
-***** override-builder
+* Building & failure classification
+*** override-builder
 #+BEGIN_SRC sh
 override_builder() {
         while test $# -ge 1
@@ -1041,8 +1032,8 @@ override_builder() {
         return 0
 }
 #+END_SRC
-***** with-field-value
-      #+BEGIN_SRC sh
+*** with-field-value
+    #+BEGIN_SRC sh
 WFV_TYPE=
 WFV_FIELD=
 WFV_NAME=
@@ -1084,9 +1075,9 @@ with_field_value() {
         cache_gen_override_one "${WFV_NAME}"
         return $result
 }
-      #+END_SRC
-***** build
-      #+BEGIN_SRC sh
+    #+END_SRC
+*** build
+    #+BEGIN_SRC sh
 build() {
         reuse_cache=
         reuse_overrides=
@@ -1105,7 +1096,83 @@ build() {
 
         coherently ${reuse_cache} ${reuse_overrides} ${attr} "${over}" override_builder ${attr} "${over}"
 }
-      #+END_SRC
+    #+END_SRC
+*** fail-classify-one-property
+    #+BEGIN_SRC sh
+declare -a keysig
+keysig=(
+"CABAL-MISSING-DEPS||||Setup: Encountered missing dependencies"
+"HASKELL-SMP-NO-INSTANCE-FOR||||No instance for \(Semigroup"
+"HASKELL-SMP-COULD-NOT-DEDUCE||||Could not deduce \(Semigroup"
+"HASKELL-SMP-APPEND-CONFLICT||||Ambiguous occurrence ‘<>’"
+"HASKELL-SMP-NO-INSTANCE-IMPL-FOR||||No instance nor default method for class operation <>"
+"HASKELL-SMP-VERSION||||Module ‘Data.Semigroup’ does not export ‘"
+"GHC-BUG||||Please report this as a GHC bug"
+"CABAL-NOT-FOUND||||/bin/sh: cabal: command not found"
+"NO-SUCH-FILE-OR-DIRECTORY||||: No such file or directory"
+"NIX-ERROR-EVAL-OVERRIDECABAL||||error: while evaluating ‘overrideCabal’"
+"JAILBREAK-CABAL-MISSING-CABAL||||jailbreak-cabal: dieVerbatim: user error \(jailbreak-cabal: Error Parsing: file "
+"CABAL-CONFIGURE-MISSING-PROGRAM||||Setup: The program '[A-Za-z-]*' is required but it could not be found"
+"NIX-MISSING-ATTRIBUTE||||error: attribute ‘[A-Za-z-]*’ in selection path ‘[A-Za-z-]*’ not found"
+"HASKELL-MISSING-EXPORT||||Module ‘[A-Za-z-]*’ does not export ‘"
+"HASKELL-AMBIGUOUS-TYPE-VARIABLE-ERROR||||Ambiguous type variable"
+"HASKELL-TYPE-ERROR||||Couldn't match expected type"
+"HASKELL-MISSING-INSTANCE||||No instance for \("
+"HASKELL-CONTEXT-NOT-SATISFIED||||Could not deduce \("
+"HASKELL-MISSING-MODULE||||Could not find module ‘"
+"HASKELL-VAR-NOT-IN-SCOPE||||Variable not in scope:"
+"CURL-404||||The requested URL returned error: 404 Not Found"
+"NO-SUCH-FILE-OR-DIRECTORY||||No such file or directory"
+"NO-CABAL-FILE-FOUND||||Setup: No cabal file found"
+"TH-RUNTIME-EXCEPTION||||Exception when trying to run compile-time code:"
+"INSTANTIATE-INFINITE-RECURSION||||infinite recursion encountered, at undefined"
+"INSTANTIATE-GENERIC||||error: while evaluating the attribute"
+"HADDOCK-INTERNAL-ERROR||||haddock: internal error:"
+)
+declare -A grepctx
+grepctx["CABAL-MISSING-DEPS"]="-A5"
+grepctx["HASKELL-SMP-NO-INSTANCE-FOR"]="-A2"
+grepctx["HASKELL-SMP-COULD-NOT-DEDUCE"]="-A2"
+grepctx["HASKELL-SMP-APPEND-CONFLICT"]="-A2"
+grepctx["HASKELL-SMP-VERSION"]="-A2"
+grepctx["GHC-BUG"]="-B30"
+grepctx["HASKELL-TYPE-ERROR"]="-A3"
+grepctx["HASKELL-MISSING-INSTANCE"]="-A2"
+grepctx["HASKELL-CONTEXT-NOT-SATISFIED"]="-A2"
+grepctx["CURL-404"]="-A1"
+grepctx["TH-RUNTIME-EXCEPTION"]="-B1 -A7"
+grepctx["INSTANTIATE-INFINITE-RECURSION"]="-B10"
+grepctx["INSTANTIATE-GENERIC"]="-A7"
+grepctx["HADDOCK-INTERNAL-ERROR"]="-A7"
+
+fail_classify_one_property() {
+        local over="$1";      shift
+        local attr="$1";      shift
+        local no_state_change="$1"
+
+        for ks in "${keysig[@]}"
+        do key="${ks%%||||*}"; sig="${ks#*||||}"
+           if      get_log ${over} ${attr} | egrep --max-count=1 -q                 "${sig}"
+           then
+                   echo "${key}"
+                   if test -z "${no_state_change}"
+                   then _set ${FAILTYTY} ${over} ${attr} "${key}"
+                   fi
+                   get_log ${over} ${attr} | egrep --max-count=1 ${grepctx["${key}"]} "${sig}" \
+			| grep -v "^$\|^builder for ‘/nix/store/\|^error: build of ‘/nix/store/" |
+                           { if test -n "${no_state_change}"
+                             then cat
+                             else tee $(path ${FAILLOGTY} ${over} ${attr})
+                             fi; }
+                   return 0
+           fi
+        done
+        echo UNKNOWN
+        _set ${FAILTYTY} ${over} ${attr} UNKNOWN
+        return 1
+}
+    #+END_SRC
+* Maintenance
 *** Trimming
 #+BEGIN_SRC sh
 show_trims() {
@@ -1175,48 +1242,6 @@ warn() {
         x="$1"
         msg="$2"
         printf "%32s: $msg\n" "$x"
-}
-
-promote_to_hackage() {
-        attr="$1"
-        release="$2"
-        upstream_master_release="$3"
-
-        if test_hackage_release "${upstream_master_release}" ${attr}
-        then hackage ${attr} "${upstream_master_release}"
-        else warn "AUTOMATIC FIX STALLED: github release version (${upstream_master_release}) has not been put on Hackage yet"
-             echo -n "New Hackage release for ${attr}: "
-             read release
-             hackage ${attr} "${release}"
-        fi
-}
-function V() # $1-a $2-op $3-$b
-# Author: stepse@StackOverflow: https://stackoverflow.com/a/48487783
-# Compare a and b as version strings. Rules:
-# R1: a and b : dot-separated sequence of items. Items are numeric. The last item can optionally end with letters, i.e., 2.5 or 2.5a.
-# R2: Zeros are automatically inserted to compare the same number of items, i.e., 1.0 < 1.0.1 means 1.0.0 < 1.0.1 => yes.
-# R3: op can be '=' '==' '!=' '<' '<=' '>' '>=' (lexicographic).
-# R4: Unrestricted number of digits of any item, i.e., 3.0003 > 3.0000004.
-# R5: Unrestricted number of items.
-{
-  local a=$1 op=$2 b=$3 al=${1##*.} bl=${3##*.}
-  while [[ $al =~ ^[[:digit:]] ]]; do al=${al:1}; done
-  while [[ $bl =~ ^[[:digit:]] ]]; do bl=${bl:1}; done
-  local ai=${a%$al} bi=${b%$bl}
-
-  local ap=${ai//[[:digit:]]} bp=${bi//[[:digit:]]}
-  ap=${ap//./.0} bp=${bp//./.0}
-
-  local w=1 fmt=$a.$b x IFS=.
-  for x in $fmt; do [ ${#x} -gt $w ] && w=${#x}; done
-  fmt=${*//[^.]}; fmt=${fmt//./%${w}s}
-  printf -v a $fmt $ai$bp; printf -v a "%s-%${w}s" $a $al
-  printf -v b $fmt $bi$ap; printf -v b "%s-%${w}s" $b $bl
-
-  case $op in
-    '<='|'>=' ) [ "$a" ${op:0:1} "$b" ] || [ "$a" = "$b" ] ;;
-    * )         [ "$a" $op "$b" ] ;;
-  esac
 }
 test_suggested_by_trim() {
         over=$1; shift
@@ -1389,8 +1414,8 @@ audit_one() {
         return $status
 }
 #+END_SRC
-*** Commands
-***** audit
+* Commands
+*** audit
 #+BEGIN_SRC sh
 audit() {
         local skip_baseline=
@@ -1425,7 +1450,7 @@ audit() {
         done | tee ${PKGDB}/audit.log
 }
 #+END_SRC
-***** baseline
+*** baseline
 #+BEGIN_SRC sh
 baseline() {
         local reuse_cache=
@@ -1459,7 +1484,18 @@ baseline() {
         return ${PIPESTATUS[0]}
 }
 #+END_SRC
-***** cache
+*** cabal2shell
+#+begin_src sh
+cabal2shell() {
+        # ATEXIT_REMOVE_FILES="default.nix shell.nix overrides.nix"
+	# trap atexit_remove_files EXIT
+        cabal2nix . "$@" > default.nix
+        emit_shell_nix   > shell.nix
+        nh overrides
+        nix-shell ${NIX_BUILD_OPTIONS}
+}
+#+END_SRC
+*** cache
 #+BEGIN_SRC sh
 cache() {
         local require_descs=
@@ -1491,43 +1527,8 @@ cache() {
         if test -z "${silent}"; then echo >&2; fi
 }
 #+END_SRC
-***** instantiate
-      #+BEGIN_SRC sh
-instantiate() {
-        local reuse_cache=
-        local debug=
-        while test $# -ge 1
-        do case "$1"
-           in --reuse-cache )          reuse_cache="reuse-cache";;
-              --debug )                debug="--debug"; set -x;;
-              "--"* )                  fail "$0: unknown option: $1";;
-              * )                      break;;
-           esac
-           shift
-        done
-
-        local ATTRSET="$*"
-        if test -z "${ATTRSET}"
-        then ATTRSET="$(_ls def/over)"
-        fi
-
-        if test -z "${reuse_cache}"
-        then cache
-        fi
-        overrides --reuse-cache ${debug}
-
-        for attr in ${ATTRSET}
-        do
-                echo -n "EVAL ${attr}> "
-                if ! do_instantiate ${attr}
-                then fail "baseline breaks package:  ${attr}"
-                fi
-        done | tee ${PKGDB}/baseline.log
-        return ${PIPESTATUS[0]}
-}
-      #+END_SRC
-***** github & hackage
-      #+BEGIN_SRC sh
+*** github & hackage
+    #+BEGIN_SRC sh
 github() {
         local attr="$1"
         local USER="$2"
@@ -1574,9 +1575,9 @@ hackage() {
 
 EOF
 }
-      #+END_SRC
-***** info
-      #+BEGIN_SRC sh
+    #+END_SRC
+*** info
+    #+BEGIN_SRC sh
 info() {
         local attr="$1"
         local repo=$(repoName ${attr})
@@ -1648,8 +1649,43 @@ show() {
             upstream: https://github.com/$(get def/github upstream $NAME)/$NAME
 EOF
 }
-      #+END_SRC
-***** loop-hunter
+    #+END_SRC
+*** instantiate
+    #+BEGIN_SRC sh
+instantiate() {
+        local reuse_cache=
+        local debug=
+        while test $# -ge 1
+        do case "$1"
+           in --reuse-cache )          reuse_cache="reuse-cache";;
+              --debug )                debug="--debug"; set -x;;
+              "--"* )                  fail "$0: unknown option: $1";;
+              * )                      break;;
+           esac
+           shift
+        done
+
+        local ATTRSET="$*"
+        if test -z "${ATTRSET}"
+        then ATTRSET="$(_ls def/over)"
+        fi
+
+        if test -z "${reuse_cache}"
+        then cache
+        fi
+        overrides --reuse-cache ${debug}
+
+        for attr in ${ATTRSET}
+        do
+                echo -n "EVAL ${attr}> "
+                if ! do_instantiate ${attr}
+                then fail "baseline breaks package:  ${attr}"
+                fi
+        done | tee ${PKGDB}/baseline.log
+        return ${PIPESTATUS[0]}
+}
+    #+END_SRC
+*** loop-hunter
 #+BEGIN_SRC sh
 loop_hunter() {
         local marker="infinite recursion encountered, at undefined position"
@@ -1671,13 +1707,13 @@ loop_hunter() {
         done
 }
 #+END_SRC
-***** overrides
+*** overrides
 #+BEGIN_SRC sh
 overrides() {
         emit_overrides "$@" > ${NIX_GHC_OVERRIDES}
 }
 #+END_SRC
-***** trim
+*** trim
 #+BEGIN_SRC sh
 trim() {
         local reuse_cache=
@@ -1716,24 +1752,6 @@ trim() {
                 echo "TRIM ${attr}> "
                 trim_one ${attr}
         done | tee ${PKGDB}/trim.log
-}
-#+END_SRC
-*** Misc cleanup routines
-  #+begin_src sh
-ATEXIT_REMOVE_FILES=
-atexit_remove_files() {
-	rm -f ${ATEXIT_REMOVE_FILES}
-}
-  #+END_SRC
-* Utilities
-#+begin_src sh
-cabal2shell() {
-        # ATEXIT_REMOVE_FILES="default.nix shell.nix overrides.nix"
-	# trap atexit_remove_files EXIT
-        cabal2nix . "$@" > default.nix
-        emit_shell_nix   > shell.nix
-        nh overrides
-        nix-shell ${NIX_BUILD_OPTIONS}
 }
 #+END_SRC
 * Help system
@@ -1798,8 +1816,11 @@ command_dispatch() {
         case "${command}" in
 help | "" )        print_help general meta overman status overhigh github build nix maintain generate miscellanea;;
 
+#+end_src
+*** General
+  #+begin_src sh :var title=(org-tangle-item)
 section-general )
-section "General" ls info overview;;
+section "${title}" ls info overview;;
 
 ls )               HELP "ls [REGEX]"               "List all overridden attributes" || return 0
                    _ls | grep "$1";;
@@ -1831,10 +1852,11 @@ EOF
 
 sanity-check )     # HELP "sanity-check"       "Internal consistency checking (non-audit-related)" || return 0;;
                    fail "NOT-IMPLEMENTED-BUT-SORELY-NEEDED";;
-
+#+end_src
+*** Metadata manipulation
+#+begin_src sh :var title=(org-tangle-item)
 section-meta )
-section "Metadata manipulation" \
-         ls-meta meta set-meta;;
+section "${title}" ls-meta meta set-meta;;
 
 ls-meta )          HELP "ls-meta ATTR"             "List attribute's metadata (as opposed to overrides" || return 0
                    lsattrs    def/meta  "$1";;
@@ -1844,9 +1866,11 @@ meta )             HELP "meta ATTR META"           "Print a single metadata entr
 
 set-meta )         HELP "set-meta ATTR META VAL"   "Set a single metadata entry of an attribute" || return 0
                    _set       def/meta  "$2" "$1" "$3";;
-
+#+end_src
+*** Override manipulation (low level)
+  #+begin_src sh :var title=(org-tangle-item)
 section-overman )
-section "Override manipulation (low level)" \
+section "${title}" \
          disable enable set-explanation set-erdeps ls-over get set edit \
          dontRevision check dontCheck haddock dontHaddock jailbreak dontJailbreak chdir extraLibs;;
 
@@ -1912,10 +1936,11 @@ chdir )
 extraLibs )        HELP "extraLibs ATTR '[ .. ]'" \
                                                   "Specify extra dependencies;  \"\" removes the override" || return 0
                    _set def/over extraLibs       "$1" "$2";   cache_gen_override_one "$1";;
-
+#+end_src
+*** Attribute status classification
+  #+begin_src sh :var title=(org-tangle-item)
 section-status )
-section "Attribute status classification" \
-         status ls-shadowed ls-hackaged ls-upstreamed ls-unmerged ls-config;;
+section "${title}" status ls-shadowed ls-hackaged ls-upstreamed ls-unmerged ls-config;;
 
 status )           HELP "status ATTR"            "Print status of a single attribute" || return 0
                    echo "$1: $(status $1)";;
@@ -1934,10 +1959,11 @@ ls-unmerged )      HELP "ls-unmerged"            "                             .
 
 ls-config )        HELP "ls-config"              "                             ...'config'" || return 0
                    filter test_is config     status;;
-
+#+end_src
+*** Override manipulation (high-level)
+  #+begin_src sh :var title=(org-tangle-item)
 section-overhigh )
-section "Override manipulation (high-level)" \
-         hackage unmerged upstream;;
+section "${title}" hackage unmerged upstream;;
 
 hackage )	   HELP "hackage ATTR [RELEASE=upstream-latest]" "Set the source override to a Hackage release" || return 0
                    attr="$1"; release="${2:-$(get_upstream_release ${attr})}"
@@ -1956,10 +1982,11 @@ upstream )	   HELP "upstream ATTR [REV=HEAD]"               "Set the source over
                    attr="$1"; rev="$2"; repo=$(repoName ${attr})
                    github "$repo" "$(get def/github upstream $repo)" "$rev"
                    cache_gen_override_one "$attr";;
-
+#+end_src
+*** Github-based (unmerged/upstream) override manipulation
+  #+begin_src sh :var title=(org-tangle-item)
 section-github )
-section "Github-based (unmerged/upstream) override manipulation" \
-         github-up set-pr set-upstream set-repoName;;
+section "${title}" github-up set-pr set-upstream set-repoName;;
 
 github-up )        HELP "github-up ATTR"                         "Bump a Github override to its latest HEAD" || return 0
                    attr="$1"; repo=$(repoName ${attr})
@@ -1982,10 +2009,11 @@ set-pr )           HELP "set-pr ATTR PR#"                        "Set the PR# of
 set-repoName )     HELP "set-repoName ATTR REPO"                 "Set an attribute's Github repository name" || return 0
                    attr="$1"; repo="$2";     _set def/meta repoName "$attr" "$repo"
                    cache_gen_override_one "$attr";;
-
+#+end_src
+*** Build & results
+  #+begin_src sh :var title=(org-tangle-item)
 section-build )
-section "Build & results" \
-         build log fail failure-type failure-log expression proof;;
+section "${title}" build log fail failure-type failure-log expression proof;;
 
 build )            HELP "build [COMMON-OPTS] ATTR"          "Build a single attribute" || return 0
                    build "$@";;
@@ -2015,10 +2043,11 @@ expr | expression )
 proof )            HELP "proof ATTR OVER" "Print the proof of necessity for an attribute's override" || return 0
                    attr="$1"; over="$2";
                    emit_explanation "${over}" "${attr}";;
-
+#+end_src
+*** Nix-level inferences
+  #+begin_src sh :var title=(org-tangle-item)
 section-nix )
-section "Nix-level inferences" \
-         drv src-drv dependencies referrers;;
+section "${title}" drv src-drv dependencies referrers;;
 
 drv )              HELP "drv ATTR"                          "Store derivation for a single override" || return 0
                    attr="$1"; over="${2:-baseline}"
@@ -2037,11 +2066,11 @@ rdeps | referrers )
                    HELP "rdeps | referrers ATTR"            "Store reverse dependencies of an override" || return 0
                    attr="$1"; over="${2:-baseline}"
                    do_instantiate ${attr} | xargs nix-store --query --referrers;;
-
-
+#+end_src
+*** Override database maintenance
+  #+begin_src sh :var title=(org-tangle-item)
 section-maintain )
-section "Override database maintenance" \
-         instantiate baseline trim trim-single show-trims execute-trims audit;;
+section "${title}" instantiate baseline trim trim-single show-trims execute-trims audit;;
 
 instantiate )      HELP "instantiate [--reuse-cache] [ATTR..]" "Instantiate overridden attrs (or specified subset)" || return 0
                    instantiate "$@";;
@@ -2065,10 +2094,11 @@ execute-trims )    HELP "execute-trims" "Execute the suggestion" || return 0
 audit )            HELP "audit [--skip-baseline] [--reuse-{overrides,cache}] [ATTR]" \
                            "Perform sanity check on the overridden attrs (or specified subset)" || return 0
                    audit "$@";;
-
+#+end_src
+*** Generation of overrides
+  #+begin_src sh :var title=(org-tangle-item)
 section-generate )
-section "Generation of overrides" \
-         over overrides overrides-descs cache show-cache;;
+section "${title}" over overrides overrides-descs cache show-cache;;
 
 over | override | show-override )
                    HELP "over | override | show-override ATTR" \
@@ -2089,10 +2119,11 @@ cache )            HELP "cache [--require-descs]" \
 
 show-cache )       HELP "show-cache ATTR"      "Print the cached text of attribute's override (DEBUG)" || return 0
                    get cache override "$1";;
-
+#+end_src
+*** Miscellanea
+  #+begin_src sh :var title=(org-tangle-item)
 section-miscellanea )
-section "Miscellanea" \
-         eval shell cabal2shell loop-hunter watch;;
+section "${title}" eval shell cabal2shell loop-hunter watch;;
 
 eval | x )         HELP "eval 'BASH-EXPR'"     "Passthrough, to execute anything defined." || return 0
                    "$@";;
@@ -2129,9 +2160,9 @@ esac
 }
 
 command_dispatch "$@"
-#+end_src
+  #+end_src
 
-;;; Local Variables:
-;;; eval: (add-hook 'after-save-hook 'org-babel-tangle)
-;;; End:
+  ;;; Local Variables:
+  ;;; eval: (progn (add-hook 'after-save-hook 'org-babel-tangle) (defun org-tangle-item () (cdr (assoc "ITEM" (org-entry-properties last-heading-pos)))) (defun org-babel-expand-body-simple-loop (acc rest) (if rest (let ((subst-pat (concat "${" (symbol-name (caar rest)) "}"))) (org-babel-expand-body-simple-loop (replace-regexp-in-string subst-pat (cdar rest) acc) (cdr rest))) acc)) (defun org-babel-expand-body:sh (body params) (let ((vars (org-babel--get-vars params))) (org-babel-expand-body-simple-loop body vars))))
+  ;;; End:
 
