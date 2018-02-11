@@ -1552,15 +1552,17 @@ attribute '${attr}':
  upstream release: $(get_upstream_release ${attr})
 EOF
                    case $(status  ${attr}) in
-                           hackaged | hackaged )
+                           hackaged | shadowed )
                    cat <<EOF
-      release (o): $(get def/hackage release ${attr})
+  overide release: $(get def/hackage release ${attr})
 EOF
                    ;;
                            upstreamed )
+                   rev=$(get def/github rev ${repo})
                    cat <<EOF
          upstream: $(get def/github upstream ${repo})
-         rev (ov): $(get def/github rev      ${repo})
+     override rev: ${rev}
+ override release: $(get_upstream_release ${attr} ${rev})
  upstream commits: $(url upstream-commits ${attr})
 EOF
                    ;;
@@ -1568,8 +1570,8 @@ EOF
                    cat <<EOF
          upstream: $(get def/github upstream ${repo})
              user: $(get def/github user     ${repo})
-         rev (ov): $(get def/github rev      ${repo})
-     user release: $(get_upstream_release ${attr})
+     override rev: $(get def/github rev      ${repo})
+ override release: $(get_user_release ${attr})
      pull request: $(url upstream-pull-request ${attr})
 EOF
                    ;;
@@ -1747,7 +1749,7 @@ command_dispatch() {
 
         command="$1"; shift 2>/dev/null || true
         case "${command}" in
-help | "" )        print_help general meta overman status overhigh github build maintain generate miscellanea;;
+help | "" )        print_help general meta overman status overhigh github build nix maintain generate miscellanea;;
 
 section-general )
 section "General" info;;
@@ -1915,26 +1917,27 @@ section-build )
 section "Build & results" \
          build log fail failure-type failure-log expression proof;;
 
-build )            HELP "build [COMMON-OPTS] ATTR" "Build a single attribute" || return 0
+build )            HELP "build [COMMON-OPTS] ATTR"          "Build a single attribute" || return 0
                    build "$@";;
+
 log | logs )
-                   HELP "log ATTR [OVER=baseline]" "Obtain trim build logs for a single override" || return 0
-                   attr="$1"; over="${2:-baseline}"; get ${LOGTY}    "${over}" ${attr};;
+                   HELP "log ATTR [OVER=baseline]"          "Obtain trim build logs for a single override" || return 0
+                   attr="$1"; over="${2:-baseline}"; get ${LOGTY}      "${over}" ${attr};;
 
 fail | failure )
-                   HELP "failure ATTR [OVER=baseline]" "Obtain trim failure kind of an override" || return 0
-                   attr="$1"; over="${2:-baseline}"; get ${FAILTY}   "${over}" ${attr};;
+                   HELP "failure ATTR [OVER=baseline]"      "Obtain trim failure kind of an override" || return 0
+                   attr="$1"; over="${2:-baseline}"; get ${FAILTY}     "${over}" ${attr};;
 
 faillog | failure-log )
-                   HELP "failure-log ATTR [OVER=baseline]" "Obtain trim failure log of an override" || return 0
-                   attr="$1"; over="$2";             faillog "${over}" "${attr}";;
+                   HELP "failure-log ATTR [OVER=baseline]"  "Obtain trim failure log of an override" || return 0
+                   attr="$1"; over="$2";             faillog           "${over}" "${attr}";;
 
 failty | failure-type )
                    HELP "failure-type ATTR [OVER=baseline]" "Obtain trim failure type of an override" || return 0
-                   attr="$1"; over="${2:-baseline}"; get ${FAILTYTY} "${over}" ${attr};;
+                   attr="$1"; over="${2:-baseline}"; get ${FAILTYTY}   "${over}" ${attr};;
 
 expr | expression )
-                   HELP "expression ATTR [OVER=baseline]" "See the the expression defining an override's trim" || return 0
+                   HELP "expression ATTR [OVER=baseline]"   "See the the expression defining an override's trim" || return 0
                    attr="$1"; over="${2:-baseline}"
                    if test "${over}" = baseline
 		   then cat ${PKGDB}/build/expr/baseline  | less --pattern=" ${attr} = "
@@ -1944,6 +1947,31 @@ expr | expression )
 proof )            HELP "proof ATTR OVER" "Print the proof of necessity for an attribute's override" || return 0
                    attr="$1"; over="$2";
                    emit_explanation "${over}" "${attr}";;
+
+section-nix )
+section "Nix-level inferences" \
+         drv src-drv dependencies referrers;;
+
+drv )
+                   HELP "drv ATTR"                          "Store derivation for a single override" || return 0
+                   attr="$1"; over="${2:-baseline}"
+                   do_instantiate ${attr};;
+
+src-drv )
+                   HELP "src-drv ATTR"                      "Store source derivation for a single override" || return 0
+                   attr="$1"; over="${2:-baseline}"
+                   do_instantiate ${attr} | xargs nix-store --query --binding src;;
+
+deps | dependencies | refs | references )
+                   HELP "deps | refs | references ATTR"     "Store dependencies of an override" || return 0
+                   attr="$1"; over="${2:-baseline}"
+                   do_instantiate ${attr} | xargs nix-store --query --references;;
+
+rdeps | referrers )
+                   HELP "rdeps | referrers ATTR"            "Store reverse dependencies of an override" || return 0
+                   attr="$1"; over="${2:-baseline}"
+                   do_instantiate ${attr} | xargs nix-store --query --referrers;;
+
 
 section-maintain )
 section "Override database maintenance" \

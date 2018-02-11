@@ -240,6 +240,14 @@ Usage:  nh [--cls] [--trace] [--debug] SUBCMD [SUBARGS..]
                              See the the expression defining an override's trim
    proof ATTR OVER           Print the proof of necessity for an attribute's override
 
+  Nix-level inferences:
+
+   drv ATTR                  Store derivation for a single override
+   src-drv ATTR              Store source derivation for a single override
+   deps | refs | references ATTR
+                             Store dependencies of an override
+   rdeps | referrers ATTR    Store reverse dependencies of an override
+
   Override database maintenance:
 
    instantiate [--reuse-cache] [ATTR..]
