@@ -1002,19 +1002,40 @@ override_builder() {
         rm -f ${PKGDB}/current.build
         if test ${status} = 0
         then
-                _set ${SUCCTY} ${over} ${attr} $(readlink result)
+                local drv=$(readlink result)
                 rm -f result
-                _set ${FAILTY}    ${over} ${attr} ""
-                _set ${FAILLOGTY} ${over} ${attr} ""
-                _set ${FAILTYTY}  ${over} ${attr} ""
         else
                 echo "FATAL: failed to build '${attr}', without overriding '${over}'" >&2
                 echo "FATAL: logs:  nh get ${LOGTY} ${over} ${attr}" >&2
                 _set ${FAILTY}   ${over} ${attr} "DIRECT"
                 fail_classify_one_property ${over} ${attr}
+                return 1
         fi
 
-        return $status
+        ###
+        ### 3. build essential rdeps
+        ###
+        for erdep in $(get def/meta erdeps ${attr})
+        do
+                echo -n "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
+                nix-build ${NIX_GHC_PACKAGE_SET} -A ${erdep} ${NIX_BUILD_OPTIONS} 2>&1 \
+                        | set_stdin ${LOGTY} ${over}.erdeps ${attr}
+                status=${PIPESTATUS[0]}
+                rm -f ${PKGDB}/current.build
+                if test ${status} != 0
+                then
+                        echo "FATAL: essential rev-dependency '${erdep}' breaks, without overriding '${attr}'s '${over}'" >&2
+                        echo "FATAL: logs:  nh get ${LOGTY} ${over} ${attr}" >&2
+                        _set ${FAILTY} ${over} ${attr} "ESSENTIAL-REVERSE ${erdep}"
+                        fail_classify_one_property ${over}.erdeps ${attr}
+                        return 1
+                fi
+        done
+        _set ${SUCCTY}    ${over} ${attr} $drv
+        _set ${FAILTY}    ${over} ${attr} ""
+        _set ${FAILLOGTY} ${over} ${attr} ""
+        _set ${FAILTYTY}  ${over} ${attr} ""
+        return 0
 }
 #+END_SRC
 ***** with-field-value
@@ -1554,7 +1575,7 @@ EOF
                    case $(status  ${attr}) in
                            hackaged | shadowed )
                    cat <<EOF
-  overide release: $(get def/hackage release ${attr})
+ override release: $(get def/hackage release ${attr})
 EOF
                    ;;
                            upstreamed )
@@ -1579,6 +1600,11 @@ EOF
                    cat <<EOF
              meta: $(lsattrs def/meta ${attr} | xargs echo)
 EOF
+                   if has def/meta erdeps ${attr}
+                   then cat <<EOF
+essential revdeps: $(get def/meta erdeps ${attr} | xargs echo)
+EOF
+                   fi
 }
 show() {
         local NAME="$1"
@@ -1752,9 +1778,12 @@ command_dispatch() {
 help | "" )        print_help general meta overman status overhigh github build nix maintain generate miscellanea;;
 
 section-general )
-section "General" info;;
+section "General" ls info;;
 
-info | show )      HELP "info ATTR"          "Overview of an attribute's PKGDB" || return 0
+ls )               HELP "ls [REGEX]"               "List all overridden attributes" || return 0
+                   _ls | grep "$1";;
+
+info | show )      HELP "info ATTR"                "Overview of an attribute's PKGDB" || return 0
                    info                            "$1";;
 
 sanity-check )     # HELP "sanity-check"       "Internal consistency checking (non-audit-related)" || return 0;;
@@ -1775,7 +1804,7 @@ set-meta )         HELP "set-meta ATTR META VAL"   "Set a single metadata entry 
 
 section-overman )
 section "Override manipulation (low level)" \
-         disable enable set-explanation ls get set edit \
+         disable enable set-explanation set-erdeps ls-over get set edit \
          dontRevision check dontCheck haddock dontHaddock jailbreak dontJailbreak chdir extraLibs;;
 
 disable )          HELP "disable ATTR[.OVER]"     "Disable all/single overrides for an attribute" || return 0
@@ -1786,13 +1815,17 @@ disable )          HELP "disable ATTR[.OVER]"     "Disable all/single overrides 
 enable )           HELP "enable ATTR[.OVER]"      "Re-enable previously disabled overrides" || return 0
                    attr="$1"; over="${2:+.$2}"
                    _set       def/meta disable${over} "$attr" ""
-                   cache_gen_override_one "$1";;                    ## List/get/set/edit overrides
+                   cache_gen_override_one "$1";;
 
 set-explanation )  HELP "set-explanation ATTR OVER" "Provide a manual explanation for an override's existence" || return 0
                    attr="$1"; over="$2"
 		   edit "def/meta" "${over}".explanation "${attr}";;
 
-ls )               HELP "ls ATTR"                 "List attribute's overrides" || return 0
+set-erdeps )       HELP "set-erdeps ATTR 'ATTR..'" "Set attribute's essential rev-deps that must keep working" || return 0
+                   attr="$1"; erdeps="$2"
+		   _set def/meta erdeps "${attr}" "${erdeps}";;
+
+ls-over )          HELP "ls-over ATTR"            "List attribute's overrides" || return 0
                    lsattrs    def/over  "$1";;
 
 get )              HELP "get ATTR OVER"           "Get an attribute's override value" || return 0
@@ -1805,41 +1838,35 @@ set )              HELP "set ATTR OVER VAL"       "Set an attribute's override v
 edit )             HELP "edit ATTR OVER"          "Edit the current attribute's value using readline" || return 0
                    edit                      "$1" "$2" "$3";;
 
-dontRevision )
-                   HELP "edit ATTR OVER"          "Edit the current attribute's value using readline" || return 0
+dontRevision )     HELP "edit ATTR OVER"          "Edit the current attribute's value using readline" || return 0
                    _set def/over revision        "$1" "null"
                    _set def/over editedCabalFile "$1" "null"; cache_gen_override_one "$1";;
 
-check | doCheck )
-                   HELP "check ATTR"              "Disable an existing dontCheck override" || return 0
+check | doCheck )  HELP "check ATTR"              "Disable an existing dontCheck override" || return 0
                    _set def/over doCheck         "$1";        cache_gen_override_one "$1";;
 
-dontCheck )
-                   HELP "dontCheck ATTR"          "Disable tests" || return 0
+dontCheck )        HELP "dontCheck ATTR"          "Disable tests" || return 0
                    _set def/over doCheck         "$1" false;  cache_gen_override_one "$1";;
 
 haddock | doHaddock )
                    HELP "haddock ATTR"            "Disable an existing dontHaddock override" || return 0
                    _set def/over doHaddock       "$1";        cache_gen_override_one "$1";;
 
-dontHaddock )
-                   HELP "dontHaddock ATTR"        "Disable Haddock generation" || return 0
+dontHaddock )      HELP "dontHaddock ATTR"        "Disable Haddock generation" || return 0
                    _set def/over doHaddock       "$1" false;  cache_gen_override_one "$1";;
 
 jailbreak | doJailbreak )
                    HELP "jailbreak ATTR"          "Turn on jailbreaking" || return 0
                    _set def/over jailbreak       "$1" true;   cache_gen_override_one "$1";;
 
-dontJailbreak ) 
-                   HELP "dontJailbreak ATTR"      "Disable an existing jailbreak override" || return 0
+dontJailbreak )    HELP "dontJailbreak ATTR"      "Disable an existing jailbreak override" || return 0
                    _set def/over jailbreak       "$1";        cache_gen_override_one "$1";;
 
 chdir )
                    HELP "chdir ATTR SUBDIR"       "Change directory before build;  \"\" removes the override" || return 0
                    _set def/over chdir           "$1" "$2";   cache_gen_override_one "$1";;
 
-extraLibs )
-                   HELP "extraLibs ATTR '[ .. ]'" \
+extraLibs )        HELP "extraLibs ATTR '[ .. ]'" \
                                                   "Specify extra dependencies;  \"\" removes the override" || return 0
                    _set def/over extraLibs       "$1" "$2";   cache_gen_override_one "$1";;
 
@@ -1920,12 +1947,10 @@ section "Build & results" \
 build )            HELP "build [COMMON-OPTS] ATTR"          "Build a single attribute" || return 0
                    build "$@";;
 
-log | logs )
-                   HELP "log ATTR [OVER=baseline]"          "Obtain trim build logs for a single override" || return 0
+log | logs )       HELP "log ATTR [OVER=baseline]"          "Obtain trim build logs for a single override" || return 0
                    attr="$1"; over="${2:-baseline}"; get ${LOGTY}      "${over}" ${attr};;
 
-fail | failure )
-                   HELP "failure ATTR [OVER=baseline]"      "Obtain trim failure kind of an override" || return 0
+fail | failure )   HELP "failure ATTR [OVER=baseline]"      "Obtain trim failure kind of an override" || return 0
                    attr="$1"; over="${2:-baseline}"; get ${FAILTY}     "${over}" ${attr};;
 
 faillog | failure-log )
@@ -1952,13 +1977,11 @@ section-nix )
 section "Nix-level inferences" \
          drv src-drv dependencies referrers;;
 
-drv )
-                   HELP "drv ATTR"                          "Store derivation for a single override" || return 0
+drv )              HELP "drv ATTR"                          "Store derivation for a single override" || return 0
                    attr="$1"; over="${2:-baseline}"
                    do_instantiate ${attr};;
 
-src-drv )
-                   HELP "src-drv ATTR"                      "Store source derivation for a single override" || return 0
+src-drv )          HELP "src-drv ATTR"                      "Store source derivation for a single override" || return 0
                    attr="$1"; over="${2:-baseline}"
                    do_instantiate ${attr} | xargs nix-store --query --binding src;;
 
@@ -1984,7 +2007,7 @@ baseline )         HELP "baseline [--reuse-{overrides,cache}] [ATTR..]" "Build o
                    baseline "$@";;
 
 trim )             HELP "trim [--skip-baseline] [--reuse-cache] [ATTR..]" \
-                                                "Suggest a reduction to the override set (or specified subset)" || return 0
+                           "Suggest a reduction to the override set (or specified subset)" || return 0
                    trim "$@";;
 
 trim-single )      HELP "trim-single ATTR OVER" "Attempt trimming a specific override of a given attribute" || return 0
@@ -1997,7 +2020,7 @@ execute-trims )    HELP "execute-trims" "Execute the suggestion" || return 0
                    execute_trims "$@";;
 
 audit )            HELP "audit [--skip-baseline] [--reuse-{overrides,cache}] [ATTR]" \
-                                                "Perform sanity check on the overridden attrs (or specified subset)" || return 0
+                           "Perform sanity check on the overridden attrs (or specified subset)" || return 0
                    audit "$@";;
 
 section-generate )
@@ -2006,18 +2029,18 @@ section "Generation of overrides" \
 
 over | override | show-override )
                    HELP "over | override | show-override ATTR" \
-                                               "Print the attribute's override defined by PKGDB" || return 0
+                           "Print the attribute's override defined by PKGDB" || return 0
                    emit_override "$1";;
 
 overrides )        HELP "overrides [--reuse-cache]" \
-                                               "Generate ${NIX_GHC_OVERRIDES}" || return 0
+                           "Generate ${NIX_GHC_OVERRIDES}" || return 0
                    overrides                   "$@";;
 
 overrides-descs )  HELP "overrides-descs"      "As overrides, but mandate that every override comes with a proof" || return 0
                    overrides --require-descs;;
 
 cache )            HELP "cache [--require-descs]" \
-                                               "Regenerate override cache" || return 0
+                           "Regenerate override cache" || return 0
                    if test -z "$*"; then cache_drop override; fi
                    cache "$@";;
 
