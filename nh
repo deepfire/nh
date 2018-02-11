@@ -2,20 +2,48 @@
 
 set -e
 
-if test -n "${NH_DEBUG}"
-then set -x
-fi
 DEFAULT_GHC=841  ## The value is actually configured, so this is for the absolute defaults.
 
+enable_debug() {
+        set -x
+        shopt -s extdebug
+        NH_BACKTRACE=true
+}
+if test -n "${NH_DEBUG}"
+then enable_debug
+fi
+
 backtrace() {
-  if [ ${#FUNCNAME[@]} -gt 2 ]
-  then
-    echo "Backtrace:" >&2
-    for ((i=1;i<${#FUNCNAME[@]}-1;i++))
-    do
-      echo " $i: ${BASH_SOURCE[$i+1]}:${BASH_LINENO[$i]} ${FUNCNAME[$i]} ${BASH_ARGV[$i+1]}" >&2
-    done
-  fi
+   if test -z "${NH_BACKTRACE}"
+   then return 0
+   fi
+   ## Source: http://www.runscripts.com/support/guides/scripting/bash/debugging-bash/stack-trace
+   declare frame=0
+   declare argv_offset=0
+
+   echo
+   echo "Backtrace:" >&2
+   while caller_info=( $(caller $frame) ) ; do
+       declare argv=()
+       declare argc
+       declare frame_argc
+
+       for ((frame_argc=${BASH_ARGC[frame]}, frame_argc--, argc=0; frame_argc >= 0; argc++, frame_argc--)) ; do
+           argv[argc]=${BASH_ARGV[argv_offset+frame_argc]}
+           case "${argv[argc]}" in
+               *[[:space:]]*) argv[argc]="'${argv[argc]}'" ;;
+           esac
+       done
+       argv_offset=$((argv_offset + ${BASH_ARGC[frame]}))
+       printf "  ${frame}: line %4d: ${FUNCNAME[frame]} ${argv[*]}\n" "${caller_info[0]}" >&2
+:
+       frame=$((frame+1))
+   done
+
+   if [[ $frame -eq 1 ]] ; then
+       caller_info=( $(caller 0) )
+       echo ":: ${caller_info[2]}: Line ${caller_info[0]}: ${caller_info[1]}" >&2
+   fi
 }
 errexit() {
   local err=$?
@@ -476,6 +504,13 @@ faillog() {
         get ${FAILLOGTY} ${over} ${attr}
 }
 
+prOrFail() {
+        repo="$1"
+        get def/github pr $repo || {
+                echo "FATAL:  pull-request not specified for github repo '${repo}'" >&2
+                fail " logs:  get def/github pr ${repo}"
+        }
+}
 url() {
         local KIND="$1"; shift
         local attr="$1"; shift
@@ -487,6 +522,7 @@ url() {
         do case "$1"
            in --subpath )              subpath="$2"; shift;;
               --gitrev )               gitrev="$2";  shift;;
+              --pull-request )         pull_request="$2";  shift;;
               --release )              release="$2"; shift;;
               "--"* )                  fail "$0: unknown option: $1";;
               * )     break;;
@@ -499,14 +535,26 @@ url() {
                 upstream-github-cabal )      echo -n "https://raw.githubusercontent.com/$(get def/github upstream $repo)/$repo/${gitrev}/$subpath$attr.cabal";;
                 user-github-cabal )          echo -n "https://raw.githubusercontent.com/$(get def/github user     $repo)/$repo/${gitrev}/$subpath$attr.cabal";;
                 upstream-github )            echo -n "https://github.com/$(               get def/github upstream $repo)/$repo";;
-                upstream-pull-request )      echo -n "https://github.com/$(               get def/github upstream $repo)/$repo/pull/$(get def/github pr $repo)";;
+                upstream-pull-request )      echo -n "https://github.com/$(               get def/github upstream $repo)/$repo/pull/$(prOrFail $repo)";;
                 commits | upstream-commits ) echo -n "https://github.com/$(               get def/github upstream $repo)/$repo/commits/master";;
                 user-commits )               echo -n "https://github.com/$(               get def/github user     $repo)/$repo/commits/master";;
                 github-prs )                 echo -n "https://github.com/$(               get def/github upstream $repo)/$repo/pulls";;
                 hackage )                    echo -n "https://hackage.haskell.org/package/$attr";;
                 hackage-package )            echo -n "https://hackage.haskell.org/package/$attr-$release/$attr-$release.tar.gz";;
+                upstream-pull-merged )       echo -n "https://api.github.com/repos/$(     get def/github user     $repo)/$repo/pulls/$(prOrFail $repo)/merge";;
                 * ) fail "invalid URL kind: '$KIND'";;
         esac
+}
+
+endpoint_head() {
+        curl -sI $(url "$@")
+}
+
+test_hackage_release() {
+        local release="$1"; shift
+        local attr="$1"; shift
+
+        endpoint_head hackage-package ${attr} --release ${release} | grep -q 'HTTP/1.1 200 OK'
 }
 
 fetch_cabal() {
@@ -529,14 +577,7 @@ get_user_release() {
         fetch_cabal user ${attr} ${gitrev} | grep -i '^version:' | sed 's/[vV]ersion:[ ]*//'
 }
 
-test_hackage_release() {
-        local release="$1"; shift
-        local attr="$1"; shift
 
-        local url="$(url hackage-package ${attr} --release ${release})"
-
-        curl -sI "${url}" | grep -q 'HTTP/1.1 200 OK'
-}
 
 github_pr_status() {
         local attr="$1"
@@ -544,12 +585,8 @@ github_pr_status() {
         local user="$(get def/github user ${repo})"
         local pull_request="$(get_def def/github pr ${repo} '')"
 
-        if test -z "${pull_request}"
-        then echo "FATAL:  pull-request not specified for github repo '${repo}'" >&2
-             fail " logs:  get def/github pr ${repo}"
-        fi
 
-        local http_code="$(curl -sI https://api.github.com/repos/${user}/${repo}/pulls/${pull_request}/merge | grep 'HTTP/1.1')"
+        local http_code="$(endpoint_head upstream-pull-merged ${attr} | grep 'HTTP/1.1')"
 
         if   echo "${http_code}" | grep -q "204 No Content"
         then echo -n "merged"
@@ -607,6 +644,8 @@ promote_to_hackage() {
              hackage ${attr} "${release}"
         fi
 }
+
+
 
 cache_gen_override_one() {
         local attr="$1"
@@ -791,7 +830,7 @@ emit_overrides() {
            in --reuse-cache )          reuse_cache="--reuse-cache";;
               --require-descs )        require_descs="--require-descs";;
               --silent )               silent="--silent";;
-              --debug )                set -x;;
+              --debug )                enable_debug;;
               "--"* )                  fail "$0: unknown option: $1";;
               * )                      break;;
            esac
@@ -981,7 +1020,7 @@ with_field_value() {
         update_cache=
         while test $# -ge 1
         do case "$1"
-           in --debug )                set -x;;
+           in --debug )                enable_debug;;
               "--"* )                  fail "$0: unknown option: $1";;
               * )                      break;;
            esac
@@ -1018,7 +1057,7 @@ build() {
         do case "$1"
            in --reuse-cache )          reuse_cache="--reuse-cache";;
               --reuse-overrides )      reuse_overrides="--reuse-overrides";;
-              --debug )                set -x;;
+              --debug )                enable_debug;;
               "--"* )                  fail "$0: unknown option: $1";;
               * )                      break;;
            esac
@@ -1248,7 +1287,7 @@ audit_one() {
                 ;;
         upstreamed )
                 ## Upstreamed and unreleased:
-                ## 1. internal checks: upstream is specified and github user is upstream
+                ## 1. internal checks: upstream and PR are specified and github user is upstream
                 ## 2. upstream master is not ahead upstream override rev, version-wise
                 ## 3. upstream release is not on hackage yet
                 local repo="$(repoName ${attr})"
@@ -1313,7 +1352,7 @@ audit_one() {
                 local pr=$(get_def def/github pr ${repo} "")
                 if   test -z "${pr}"
                 then
-                        warn "${attr}" "no PR: _set def/github pr ${repo}"; status=1
+                        warn "${attr}" "no upstream PR: _set def/github pr ${repo}"; status=1
                         if test -n "${autofix}"
                         then warn "MANUAL FIX: supply missing PR #"
                              echo -n "New upstream PR # for ${attr}: "
@@ -1569,7 +1608,7 @@ instantiate() {
         while test $# -ge 1
         do case "$1"
            in --reuse-cache )          reuse_cache="reuse-cache";;
-              --debug )                debug="--debug"; set -x;;
+              --debug )                debug="--debug"; enable_debug;;
               "--"* )                  fail "$0: unknown option: $1";;
               * )                      break;;
            esac
@@ -1696,7 +1735,7 @@ while test $# -ge 1
 do case "$1"
    in --cls )              echo -en "\ec";;
       --trace )            set -x;;
-      --debug )            set -x
+      --debug )            enable_debug
                            # Unfortunately, this cannot work in general, because of the broken 'return 1' handling:
                            shopt -s extdebug
                            trap 'errexit' ERR # trap ERR to provide an error handler whenever a command exits nonzero this is a more verbose version of set -o errexit
@@ -1970,8 +2009,8 @@ show-trims )       HELP "show-trims" "Show the trim suggestion" || return 0
 execute-trims )    HELP "execute-trims" "Execute the suggestion" || return 0
                    execute_trims "$@";;
 
-audit )            HELP "audit [--skip-baseline] [--reuse-{overrides,cache}] [ATTR]" \
-                           "Perform sanity check on the overridden attrs (or specified subset)" || return 0
+audit )            HELP "audit [--autofix] [--skip-baseline] [--reuse-{overrides,cache}] [ATTR]" \
+                           "Sanity check the overridden attrs (or specified subset).  --autofix applies suggestions" || return 0
                    audit "$@";;
 
 section-generate )
