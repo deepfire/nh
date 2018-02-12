@@ -97,10 +97,16 @@ map2() {
 }
 when() { local pred="$1"; shift; if test -n "${pred}"; then "$@"; fi
        }
+iff() { local yes="$1"; local no="$2"; shift 2
+        if "$@"
+        then echo -n "$yes"
+        else echo -n "$no"
+        fi
+}
 
 init_pkgdb() {
-        dir="$1"
-        force="$2"
+        local dir="$1"
+        local force="$2"
 
         if   test -e "${dir}" -a "${force}" != "--force"
         then fail "cannot make a new override database at '${dir}': already exists"
@@ -117,7 +123,7 @@ init_pkgdb() {
         exit 0
 }
 validate_pkgdb() {
-        pkgdb="$1"
+        local pkgdb="$1"
         test    -d ${pkgdb}/def/over    \
              -a -d ${pkgdb}/def/meta    \
              -a -d ${pkgdb}/def/github  \
@@ -136,7 +142,7 @@ FAILTYTY=build/failure-type
 FAILLOGTY=build/failure-log
 
 emit_nh_config() {
-        PKGDB="$1"
+        local PKGDB="$1"
         cat <<EOF
 GHC=${DEFAULT_GHC}
 PKGDB=${PKGDB}  # The override state database.
@@ -505,7 +511,7 @@ faillog() {
 }
 
 prOrFail() {
-        repo="$1"
+        local repo="$1"
         get def/github pr $repo || {
                 echo "FATAL:  pull-request not specified for github repo '${repo}'" >&2
                 fail " logs:  get def/github pr ${repo}"
@@ -541,7 +547,9 @@ url() {
                 github-prs )                 echo -n "https://github.com/$(               get def/github upstream $repo)/$repo/pulls";;
                 hackage )                    echo -n "https://hackage.haskell.org/package/$attr";;
                 hackage-package )            echo -n "https://hackage.haskell.org/package/$attr-$release/$attr-$release.tar.gz";;
-                upstream-pull-merged )       echo -n "https://api.github.com/repos/$(     get def/github user     $repo)/$repo/pulls/$(prOrFail $repo)/merge";;
+                pull-merged )                echo -n "https://api.github.com/repos/$(     get def/github user     $repo)/$repo/pulls/$(prOrFail $repo)/merge";;
+                commit )                     echo -n "https://api.github.com/repos/$(     get def/github user     $repo)/$repo/commits?sha=${gitrev}";;
+                github-requests-remaining )  echo -n "https://api.github.com/rate_limit";;
                 * ) fail "invalid URL kind: '$KIND'";;
         esac
 }
@@ -549,12 +557,63 @@ url() {
 endpoint_head() {
         curl -sI $(url "$@")
 }
+endpoint_test_status() {
+        local status="$1"; shift
+        endpoint_head "$@" | grep -q "${status}"
+        test ${PIPESTATUS[0]} = 0 -a ${PIPESTATUS[1]} = 0
+}
+endpoint_field() {
+        local field="$1"; shift
+        endpoint_head "$@" | grep "^${field}: " | cut -d' ' -f2-
+        test ${PIPESTATUS[0]} = 0
+}
 
 test_hackage_release() {
         local release="$1"; shift
         local attr="$1"; shift
 
-        endpoint_head hackage-package ${attr} --release ${release} | grep -q 'HTTP/1.1 200 OK'
+        endpoint_test_status 'HTTP/1.1 200 OK' hackage-package ${attr} --release ${release}
+}
+hackage_release_date() {
+        local attr="$1"; shift
+        local release="$1"; shift
+
+        ret="$(endpoint_field 'Last-modified' hackage-package ${attr} --release ${release})"
+        if test -z "${ret}"
+        then return 1
+        else echo "${ret}"
+        fi
+}
+hackage_release_timestamp() {
+        date=$(hackage_release_date "$@")
+        if test $? != 0
+        then return 1
+        fi
+        date -d "$date" +%s
+}
+
+fix_commit() {
+        local attr="$1"; shift
+
+        get def/github rev $(repoName "${attr}")
+}
+commit_date() {
+        local attr="$1"; shift
+        local gitrev="${1:-master}"
+
+        endpoint_field "Last-Modified" commit "${attr}" --gitrev "${gitrev}"
+        return ${PIPESTATUS[0]}
+}
+commit_timestamp() {
+        date="$(commit_date "$@")"
+        if test $? != 0
+        then return 1
+        fi
+        date -d "$date" +%s
+}
+fix_timestamp() {
+        local attr="$1"; shift
+        get def/github timestamp $(repoName "${attr}")
 }
 
 fetch_cabal() {
@@ -586,7 +645,7 @@ github_pr_status() {
         local pull_request="$(get_def def/github pr ${repo} '')"
 
 
-        local http_code="$(endpoint_head upstream-pull-merged ${attr} | grep 'HTTP/1.1')"
+        local http_code="$(endpoint_head pull-merged ${attr} | grep 'HTTP/1.1')"
 
         if   echo "${http_code}" | grep -q "204 No Content"
         then echo -n "merged"
@@ -631,10 +690,23 @@ function V() # $1-a $2-op $3-$b
   esac
 }
 
+hackage_ahead_of_fix() {
+        local attr="$1"
+        local upstream_release=$(get_upstream_release ${attr})
+        if test_hackage_release ${upstream_release} ${attr}
+        then
+                local hackage_timestamp=$(hackage_release_timestamp ${attr} ${upstream_release})
+                local fix_stamp=$(fix_timestamp ${attr})
+                test ${fix_stamp} -le ${hackage_timestamp}
+        else
+                return 1
+        fi
+}
+
 promote_to_hackage() {
-        attr="$1"
-        release="$2"
-        upstream_master_release="$3"
+        local attr="$1"
+        local release="$2"
+        local upstream_master_release="$3"
 
         if test_hackage_release "${upstream_master_release}" ${attr}
         then hackage ${attr} "${upstream_master_release}"
@@ -645,7 +717,9 @@ promote_to_hackage() {
         fi
 }
 
-
+github_requests_remaining() {
+        endpoint_field "X-RateLimit-Remaining" github-requests-remaining
+}
 
 cache_gen_override_one() {
         local attr="$1"
@@ -705,7 +779,7 @@ cache_copy() {
 	popd >/dev/null
 }
 cache_drop() {
-        FIELD="$1"
+        local FIELD="$1"
         rm -f ${PKGDB}/cache/*.${FIELD}
 }
 
@@ -742,8 +816,8 @@ fail_uncached() {
         exit 1
 }
 emit_property_override() {
-        attr="$1"; shift
-        propName="$1"
+        local attr="$1"; shift
+        local propName="$1"
         eval "${propName}=\"$(get_def def/over ${propName} ${attr})\""
         eval propVal=\$$propName
         if test ! -z "${propVal}" && ! has def/meta disable.${propName} ${attr}
@@ -1204,17 +1278,17 @@ trim_one() {
 }
 
 warn() {
-        x="$1"
-        msg="$2"
+        local x="$1"
+        local msg="$2"
         printf "%32s: $msg\n" "$x"
 }
 test_suggested_by_trim() {
-        over=$1; shift
-        attr=$1; shift
+        local over=$1; shift
+        local attr=$1; shift
         has ${SUCCTY} ${over} ${attr}
 }
 attrs_suggested_by_trim() {
-        attr=$1; shift
+        local attr=$1; shift
         for over in $(lsattrs def/over ${attr})
         do if test_suggested_by_trim ${over} ${attr}
            then echo ${over}
@@ -1223,9 +1297,11 @@ attrs_suggested_by_trim() {
 }
 audit_one() {
         local autofix=
+        local autoonly=
         while test $# -ge 1
         do case "$1"
            in --autofix ) autofix=yes-please;;
+              --autoonly ) autoonly=yes-please;;
               "--"* )     fail "$0: unknown option: $1";;
               * )         break;;
            esac
@@ -1294,7 +1370,7 @@ audit_one() {
                 if ! has def/github upstream ${repo}
                 then
                         warn "${attr}/${repo}" "github upstream not specified"; status=1
-                        if test -n "${autofix}"
+                        if test -n "${autofix}" -a -z "${autoonly}"
                         then
                                 warn "MANUAL FIX: supply missing upstream"
                                 echo -n "New upstream github username for ${attr}: "
@@ -1323,6 +1399,17 @@ audit_one() {
                                 fi
                         else
                                 warn "${attr}" "upstream master: ${upstream_master_release}, upstream override: ${upstream_override_release} BUT upstream master's version (${upstream_master_release}) is not yet on Hackage"; status=1
+                       fi
+                elif hackage_ahead_of_fix ${attr}
+                then
+                       local release=${upstream_master_release}
+                       local reldate="$(hackage_release_date ${attr} ${release})"
+                       local fixstamp="$(fix_timestamp ${attr})"
+                       local fixdate="$(date -d @${fixstamp})"
+                       warn "${attr}" "hackage ${release} obsoletes upstream fix (version ${upstream_override_release}), committed ${fixdate} < release uploaded ${reldate}"
+                       if test -n "${autofix}"
+                       then warn "AUTOMATIC FIX: promote src override from github to hackage"
+                               promote_to_hackage ${attr} "${release}" "${release}"
                        fi
                 # else echo "${attr}: ${upstream_master_release} == ${upstream_override_release}"
                 fi
@@ -1353,7 +1440,7 @@ audit_one() {
                 if   test -z "${pr}"
                 then
                         warn "${attr}" "no upstream PR: _set def/github pr ${repo}"; status=1
-                        if test -n "${autofix}"
+                        if test -n "${autofix}" -a -z "${autoonly}"
                         then warn "MANUAL FIX: supply missing PR #"
                              echo -n "New upstream PR # for ${attr}: "
                              read pr
@@ -1498,9 +1585,10 @@ github() {
         then fail "zero repo hash.  Bad commit id?"
         fi
 
-        _set def/github hash $repo "${HASH}"
-        _set def/github rev  $repo "${REV}"
-        _set def/github user $repo "${USER}"
+        _set def/github hash      $repo "${HASH}"
+        _set def/github rev       $repo "${REV}"
+        _set def/github user      $repo "${USER}"
+        _set def/github timestamp $repo  $(commit_timestamp "${attr}" "${REV}")
         _set def/over   src "$attr" github
 
         cat <<EOF
@@ -1749,7 +1837,7 @@ done
 
 command_dispatch() {
 
-        command="$1"; shift 2>/dev/null || true
+        local command="$1"; shift 2>/dev/null || true
         case "${command}" in
 help | "" )        print_help general meta overman status overhigh github build nix maintain generate miscellanea;;
 
@@ -1773,9 +1861,19 @@ EOF
                            for attr in $(filter test_is "$status" status)
                            do echo $attr
                               case $status in
-                                hackaged )   echo "  upstream: $(get_upstream_release ${attr})"; echo "  nixpkgs: $(get_nixpkgs_release ${attr})";;
-                                upstreamed ) echo "  upstream: $(get_upstream_release ${attr})"; echo "  nixpkgs: $(get_nixpkgs_release ${attr})"; echo "  commits: $(url upstream-commits ${attr})";;
-                                unmerged )   echo "  upstream: $(get_upstream_release ${attr})"; echo "  nixpkgs: $(get_nixpkgs_release ${attr})"; echo "  PR: $(url upstream-pull-request ${attr})";;
+                                hackaged | upstreamed | unmerged )
+                                             upstream_release="$(get_upstream_release ${attr})"
+                                             echo "  upstream: ${upstream_release}"
+                                             echo "  nixpkgs: $(get_nixpkgs_release ${attr})";;
+                              esac
+                              case $status in
+                                upstreamed ) echo "  commits: $(url upstream-commits ${attr})"
+                                             echo "  hackage: $(url hackage ${attr})"
+                                             echo "  last upstream release on hackage: $(iff yes no test_hackage_release ${upstream_release} ${attr})"
+                                             echo "  hackage release date: $(hackage_release_date ${attr} ${upstream_release})"
+                                             echo "  fix commit date: $(date -d @$(fix_timestamp ${attr}))"
+                                             ;;
+                                unmerged )   echo "  PR: $(url upstream-pull-request ${attr})";;
                               esac
                               trs="$(attrs_suggested_by_trim ${attr})"
                               if test -n "${trs}"
@@ -1905,8 +2003,10 @@ unmerged )	   HELP "unmerged ATTR USER PR# [REV=HEAD]"      "Set the source over
                    cache_gen_override_one "$attr";;
 
 upstream )	   HELP "upstream ATTR [REV=HEAD]"               "Set the source override to an upstream Github commit" || return 0
-                   attr="$1"; rev="$2"; repo=$(repoName ${attr})
-                   github "$repo" "$(get def/github upstream $repo)" "$rev"
+                   attr="$1"; rev="$2"
+                   repo=$(repoName ${attr})
+                   user=$(get def/github upstream $repo)
+                   github "$attr" "$user" "$rev"
                    cache_gen_override_one "$attr";;
 
 section-github )
@@ -2009,7 +2109,7 @@ show-trims )       HELP "show-trims" "Show the trim suggestion" || return 0
 execute-trims )    HELP "execute-trims" "Execute the suggestion" || return 0
                    execute_trims "$@";;
 
-audit )            HELP "audit [--autofix] [--skip-baseline] [--reuse-{overrides,cache}] [ATTR]" \
+audit )            HELP "audit [--autofix] [--autoonly] [--skip-baseline] [--reuse-{overrides,cache}] [ATTR]" \
                            "Sanity check the overridden attrs (or specified subset).  --autofix applies suggestions" || return 0
                    audit "$@";;
 
