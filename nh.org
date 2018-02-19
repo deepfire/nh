@@ -1932,6 +1932,7 @@ while test $# -ge 1
 do case "$1"
    in --cls )              echo -en "\ec";;
       --trace )            set -x;;
+      --help | -h )        $0 help;;
       --debug )            enable_debug
                            # Unfortunately, this cannot work in general, because of the broken 'return 1' handling:
                            shopt -s extdebug
