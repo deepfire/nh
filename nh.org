@@ -929,7 +929,7 @@ EOF
                                                 then echo "    prePatch        = \"cd $(get def/meta chdir ${attr}); \";"
                                                 fi
                                                 ;;
-                                        * )     fail "unknown value for src override: '$src'";;
+                                        ,* )     fail "unknown value for src override: '$src'";;
                                 esac;;
                         doCheck )          echo "    doCheck         = ${doCheck};";;
                         doHaddock )        echo "    doHaddock       = ${doHaddock};";;
@@ -938,7 +938,7 @@ EOF
                         revision )         echo "    revision        = ${revision};";;
                         postPatch )        echo "    postPatch       = \"${postPatch}\";";;
                         extraLibs )        echo "    libraryHaskellDepends = drv.libraryHaskellDepends ++ ${extraLibs};";;
-                        * ) fail "unknown property: '${propName}'";;
+                        ,* ) fail "unknown property: '${propName}'";;
                 esac
         fi
 }
@@ -986,7 +986,7 @@ emit_overrides() {
               --silent )               silent="--silent";;
               --debug )                enable_debug;;
               "--"* )                  fail "$0: unknown option: $1";;
-              * )                      break;;
+              ,* )                      break;;
            esac
            shift
         done
@@ -1060,10 +1060,11 @@ EOF
   ${ACME_ATTRIBUTE} = self.mkDerivation {
     pname = "${ACME_ATTRIBUTE}";
     version = "0.0.0";
+    src = ./.;
     isLibrary = true;
     isExecutable = true;
     libraryHaskellDepends = [
-      $(_ls; ls_extra_validation_attributes)
+      $(ls_acme_deps)
     ];
     license = stdenv.lib.licenses.bsd3;
   };
@@ -1074,6 +1075,18 @@ EOF
 }
 EOF
         echo " done." >&2
+}
+
+ls_acme_deps() {
+        _ls
+        ls_essential_reverse_deps
+        ls_extra_validation_attributes
+}
+
+ls_essential_reverse_deps() {
+        for attr in $(_ls)
+        do get def/meta erdeps ${attr} | xargs echo
+        done | sed $'s/ /\\\n/'g | sort | uniq
 }
 
 ls_extra_validation_attributes() {
@@ -1417,7 +1430,7 @@ audit_one() {
            in --autofix ) autofix=yes-please;;
               --autoonly ) autoonly=yes-please;;
               "--"* )     fail "$0: unknown option: $1";;
-              ,* )         break;;
+              * )         break;;
            esac
            shift
         done
@@ -1577,7 +1590,7 @@ audit_one() {
         config )
                 ## Proof of necessity (at the top of the file) suffices.
                 true;;
-        ,* )
+        * )
                 fail "$0: unhandled status '$(status ${attr})' of attribute ${attr}";;
         esac
         fi
@@ -1619,6 +1632,41 @@ audit() {
         for attr in ${ATTRSET}
         do audit_one ${autofix} ${attr} || true
         done | tee ${PKGDB}/audit.log
+}
+#+END_SRC
+*** acme
+#+BEGIN_SRC sh
+
+acme() {
+        local reuse_cache=
+        while test $# -ge 1
+        do case "$1"
+           in --reuse-cache )          reuse_cache="--reuse-cache";;
+              "--"* )                  fail "$0: unknown option: $1";;
+              * )                      break;;
+           esac
+           shift
+        done
+
+        if test -z "${reuse_overrides}"
+        then overrides ${reuse_cache} --emit-acme
+        fi
+
+        attr=${ACME_ATTRIBUTE}
+        over="default"
+        echo "-( building ACME catch-all attribute that depends on everything overridden:"
+        echo "--( < ${attr}"
+        echo "--( > $(ls_acme_deps | xargs echo)"
+        echo "---(             logs:  nh logs ${attr} ${over}"
+        echo "---(    watch it live:  nh watch  --or-- nh progress"
+        echo -n "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
+        nix-shell ${NIX_GHC_PACKAGE_SET} -A ${attr} ${NIX_BUILD_OPTIONS} --no-out-link 2>&1 \
+                | set_stdin ${LOGTY} ${over} ${attr}
+        status=${PIPESTATUS[0]}
+        if test ${status} != 0
+        then nh logs ${attr} ${over} | log_filter_progress
+        fi
+        return ${status}
 }
 #+END_SRC
 *** baseline
@@ -2258,10 +2306,14 @@ rdeps | referrers )
 *** Override database maintenance
   #+begin_src sh :var title=(org-tangle-item)
 section-maintain )
-section "${title}" instantiate baseline trim trim-single show-trims execute-trims audit;;
+section "${title}" instantiate acme baseline trim trim-single show-trims execute-trims audit;;
 
 instantiate )      HELP "instantiate [--reuse-cache] [ATTR..]" "Instantiate overridden attrs (or specified subset)" || return 0
                    instantiate "$@";;
+
+acme )
+                   HELP "acme [--reuse-cache]" "Build everything at once, collecting all failures" || return 0
+                   acme "$@";;
 
 baseline )         HELP "baseline [--reuse-{overrides,cache}] [ATTR..]" "Build overridden attrs (or specified subset)" || return 0
                    baseline "$@";;
@@ -2311,7 +2363,7 @@ show-cache )       HELP "show-cache ATTR"      "Print the cached text of attribu
 *** Miscellanea
   #+begin_src sh :var title=(org-tangle-item)
 section-miscellanea )
-section "${title}" eval shell cabal2shell loop-hunter watch;;
+section "${title}" eval shell cabal2shell loop-hunter progress watch;;
 
 eval | x )         HELP "eval 'BASH-EXPR'"     "Passthrough, to execute anything defined." || return 0
                    "$@";;
@@ -2331,6 +2383,14 @@ shell-failures )   HELP "shell-failures"       "Entering nix-shell, filtering th
 
 loop-hunter )      HELP "loop-hunter"          "Detect attribute loops:  nix-shell 2>&1 | nh loop-hunter" || return 0
                    loop_hunter;;
+
+progress )         HELP "progress"             "Observe build progress" || return 0
+                   if   test -f "$(cat ${PKGDB}/current.build    2>/dev/null)"
+                   then      log=$(cat ${PKGDB}/current.build    2>/dev/null)
+                   else fail "Nothing to watch, exiting."
+                   fi
+                   echo "watching ${log}"
+                   watch --interval=1 bash -c "'cat $(cat ${PKGDB}/current.build    2>/dev/null) | nh x log_filter_progress'";;
 
 watch )            HELP "watch"                "Observe the current build, as it hits the logs.." || return 0
                    if   test -f "$(cat ${PKGDB}/current.build    2>/dev/null)"
