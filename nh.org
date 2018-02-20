@@ -8,6 +8,7 @@
 set -e
 
 DEFAULT_GHC=841  ## The value is actually configured, so this is for the absolute defaults.
+ACME_ATTRIBUTE=nh-acme-grand-total-attribute
 
 #+end_src
 * Basis
@@ -271,6 +272,8 @@ path() {
         echo ${PKGDB}/${TYPE}/${NAME}.${FIELD}
 }
 _ls() {
+        # List all overridden attributes.
+        # NOTE:  this includes attributes whose overrides are disabled by meta/disable.
         local TYPE="${1:-def/over}"
 
         pushd ${PKGDB}/${TYPE} >/dev/null
@@ -978,6 +981,7 @@ emit_overrides() {
         do case "$1"
            in --reuse-cache )          reuse_cache="--reuse-cache";;
               --require-descs )        require_descs="--require-descs";;
+              --emit-acme )            emit_acme="--emit-acme";;
               --silent )               silent="--silent";;
               --debug )                enable_debug;;
               "--"* )                  fail "$0: unknown option: $1";;
@@ -1047,10 +1051,32 @@ EOF
         do get cache override ${attr} || fail_uncached ${attr}; echo -n . >&2
         done
 
+        if test -n "${emit_acme}"
+        then
+                cat <<EOF
+
+  ## The catch-all attribute that depends on everything overridden (incl. meta/disabled things).
+  ${ACME_ATTRIBUTE} = self.mkDerivation {
+    pname = "${ACME_ATTRIBUTE}";
+    version = "0.0.0";
+    isLibrary = true;
+    isExecutable = true;
+    libraryHaskellDepends = [
+      $(_ls; ls_extra_validation_attributes)
+    ];
+    license = stdenv.lib.licenses.bsd3;
+  };
+EOF
+        fi
+
         cat <<EOF
 }
 EOF
         echo " done." >&2
+}
+
+ls_extra_validation_attributes() {
+        get_def def/meta extra-validation-attributes
 }
     #+END_SRC
 * Building & failure classification
@@ -2323,4 +2349,3 @@ command_dispatch "$@"
   ;;; Local Variables:
   ;;; eval: (progn (add-hook 'after-save-hook 'org-babel-tangle) (defun org-tangle-item () (cdr (assoc "ITEM" (org-entry-properties last-heading-pos)))) (defun org-babel-expand-body-simple-loop (acc rest) (if rest (let ((subst-pat (concat "${" (symbol-name (caar rest)) "}"))) (org-babel-expand-body-simple-loop (replace-regexp-in-string subst-pat (cdar rest) acc) (cdr rest))) acc)) (defun org-babel-expand-body:sh (body params) (let ((vars (org-babel--get-vars params))) (org-babel-expand-body-simple-loop body vars))))
   ;;; End:
-
