@@ -1567,9 +1567,9 @@ acme() {
         echo "--( < ${attr}"
         echo "--( > $(ls_acme_deps | xargs echo)"
         echo "---(             logs:  nh logs ${attr} ${over}"
-        echo "---(    watch it live:  nh watch  --or-- nh progress"
+        echo "---(    watch it live:  nh watch  --or--  nh progress"
         echo -n "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
-        nix-shell ${NIX_GHC_PACKAGE_SET} -A ${attr} ${NIX_BUILD_OPTIONS} --no-out-link 2>&1 \
+        nix-shell ${NIX_GHC_PACKAGE_SET} -A ${attr} ${NIX_BUILD_OPTIONS} --no-out-link --keep-going 2>&1 \
                 | set_stdin ${LOGTY} ${over} ${attr}
         status=${PIPESTATUS[0]}
         if test ${status} != 0
@@ -2150,13 +2150,13 @@ proof )            HELP "proof ATTR OVER" "Print the proof of necessity for an a
                    emit_explanation "${over}" "${attr}";;
 
 section-nix )
-section "Nix-level inferences" drv src-drv dependencies referrers;;
+section "Nix-level inferences" drv src dependencies referrers;;
 
 drv )              HELP "drv ATTR"                          "Store derivation for a single override" || return 0
                    attr="$1"; over="${2:-baseline}"
                    do_instantiate ${attr};;
 
-src-drv )          HELP "src-drv ATTR"                      "Store source derivation for a single override" || return 0
+src )              HELP "src ATTR"                          "Store source derivation for a single override" || return 0
                    attr="$1"; over="${2:-baseline}"
                    do_instantiate ${attr} | xargs nix-store --query --binding src;;
 
