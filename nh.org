@@ -122,6 +122,7 @@ iff() { local yes="$1"; local no="$2"; shift 2
 *** Ensure config and PKGDB exist
 #+BEGIN_SRC sh
 init_pkgdb() {
+        set -x
         local dir="$1"
         local force="$2"
 
@@ -257,7 +258,7 @@ NIX_BUILD_OPTIONS="--argstr compiler ghc${GHC} --show-trace --cores 0"
 #+END_SRC
 * Library
 *** Generic shell
-#+BEGIN_SRC bash
+#+BEGIN_SRC sh
 ensure_trailing_newline() {
 	sed '$a\'
 }
@@ -1996,7 +1997,7 @@ section-general )
 section "${title}" ls info overview;;
 
 ls )               HELP "ls [REGEX]"               "List all overridden attributes" || return 0
-                   _ls | grep "$1";;
+                   _ls | grep "$1" || true;;
 
 info | show )      HELP "info ATTR"                "Overview of an attribute's PKGDB" || return 0
                    info                            "$1";;
