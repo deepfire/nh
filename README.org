@@ -206,6 +206,7 @@ Usage:  nh [--cls] [--trace] [--debug] SUBCMD [SUBARGS..]
    ls-meta ATTR              List attribute's metadata (as opposed to overrides
    meta ATTR META            Print a single metadata entry of an attribute
    set-meta ATTR META VAL    Set a single metadata entry of an attribute
+   edit-meta ATTR META       Edit the current attribute's meta value using readline
 
   Override manipulation (low level):
 
@@ -278,6 +279,7 @@ Usage:  nh [--cls] [--trace] [--debug] SUBCMD [SUBARGS..]
 
    instantiate [--reuse-cache] [ATTR..]
                              Instantiate overridden attrs (or specified subset)
+   acme [--reuse-cache]      Build everything at once, collecting all failures
    baseline [--reuse-{overrides,cache}] [ATTR..]
                              Build overridden attrs (or specified subset)
    trim [--skip-baseline] [--reuse-cache] [ATTR..]
@@ -285,8 +287,8 @@ Usage:  nh [--cls] [--trace] [--debug] SUBCMD [SUBARGS..]
    trim-single ATTR OVER     Attempt trimming a specific override of a given attribute
    show-trims                Show the trim suggestion
    execute-trims             Execute the suggestion
-   audit [--skip-baseline] [--reuse-{overrides,cache}] [ATTR]
-                             Perform sanity check on the overridden attrs (or specified subset)
+   audit [--autofix] [--autoonly] [--skip-baseline] [--reuse-{overrides,cache}] [ATTR]
+                             Sanity check the overridden attrs (or specified subset).  --autofix applies suggestions
 
   Generation of overrides:
 
@@ -303,6 +305,7 @@ Usage:  nh [--cls] [--trace] [--debug] SUBCMD [SUBARGS..]
    shell                     Nix shell with up-to-date overrides (shell.nix required)
    cabal2shell               Nix shell from a cabal file (nothing else required)
    loop-hunter               Detect attribute loops:  nix-shell 2>&1 | nh loop-hunter
+   progress                  Observe build progress
    watch                     Observe the current build, as it hits the logs..
 
 #+END_SRC
