@@ -1,3 +1,7 @@
+ensure_trailing_newline() {
+	sed '$a\'
+}
+
 #!/usr/bin/env bash
 
 set -e
@@ -792,8 +796,10 @@ emit_explanation() {
              esac
              echo
         fi
-        get def/meta ${over}.explanation ${attr} ||
-                faillog ${over} ${attr}
+        {
+		get def/meta ${over}.explanation ${attr} ||
+                	faillog ${over} ${attr}
+	} | ensure_trailing_newline
 }
 emit_src_description() {
         local attr="$1";         shift
@@ -818,7 +824,7 @@ emit_property_override() {
         eval propVal=\$$propName
         if test ! -z "${propVal}" && ! has def/meta disable.${propName} ${attr}
         then
-                emit_explanation ${propName} ${attr} | sed 's/^/    ## /' | sed '$a\' # enforce trailing newline
+                emit_explanation ${propName} ${attr} | sed 's/^/    ## /'
                 if test ! -z "${REQUIRE_DESC}" -a ${PIPESTATUS[0]} != 0
                 then fail "missing failure log for ${attr}.${propName}, and couldn't compute it either:  nh x emit_explanation ${propName} ${attr}"
                 fi
@@ -1746,6 +1752,7 @@ loop_hunter() {
 
 overrides() {
         emit_overrides "$@" > ${NIX_GHC_OVERRIDES}
+        cp -f ${NIX_GHC_OVERRIDES} ${PKGDB}/overrides.nix
 }
 
 trim() {
