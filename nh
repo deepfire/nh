@@ -1921,7 +1921,7 @@ sanity-check )     # HELP "sanity-check"       "Internal consistency checking (n
                    fail "NOT-IMPLEMENTED-BUT-SORELY-NEEDED";;
 
 section-meta )
-section "Metadata manipulation" ls-meta meta set-meta;;
+section "Metadata manipulation" ls-meta meta set-meta edit-meta;;
 
 ls-meta )          HELP "ls-meta ATTR"             "List attribute's metadata (as opposed to overrides" || return 0
                    lsattrs    def/meta  "$1";;
@@ -1931,6 +1931,9 @@ meta )             HELP "meta ATTR META"           "Print a single metadata entr
 
 set-meta )         HELP "set-meta ATTR META VAL"   "Set a single metadata entry of an attribute" || return 0
                    _set       def/meta  "$2" "$1" "$3";;
+
+edit-meta )        HELP "edit-meta ATTR META"      "Edit the current attribute's meta value using readline" || return 0
+                   edit       def/meta  "$2" "$1";;
 
 chdir )            HELP "chdir ATTR SUBDIR"       "Change directory before build;  \"\" removes the override" || return 0
                    _set def/meta chdir           "$1" "$2";   overrides "$1";;
@@ -1969,7 +1972,7 @@ set )              HELP "set ATTR OVER VAL"       "Set an attribute's override v
                    overrides "$1";;
 
 edit )             HELP "edit ATTR OVER"          "Edit the current attribute's value using readline" || return 0
-                   edit                      "$1" "$2" "$3";;
+                   edit def/over                 "$2" "$1";;
 
 dontRevision )     HELP "edit ATTR OVER"          "Edit the current attribute's value using readline" || return 0
                    _set def/over revision        "$1" "null"
