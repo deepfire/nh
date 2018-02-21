@@ -243,6 +243,10 @@ NIX_BUILD_OPTIONS="--argstr compiler ghc${GHC} --show-trace --cores 0"
 ensure_trailing_newline() {
 	sed '$a\'
 }
+prefix_lines() {
+        prefix="$1"
+	sed "s/^/${prefix}/; s/[ ]*\$//"
+}
 
 path() {
         local TYPE="$1"
@@ -424,7 +428,7 @@ edit() {
         local NAME="$1";  shift
 
         read -ep "${NAME}.${TYPE}.${FIELD}: " -i "$(get ${TYPE} ${FIELD} ${NAME})"
-        _set "${TYPE}" "${FIELD}" ${NAME} "${REPLY}"
+        _set "${TYPE}" "${FIELD}" "${NAME}" "${REPLY}"
 }
 stdin_forall_edit() {
         local TYPE="$1";  shift
@@ -525,6 +529,13 @@ prOrFail() {
                 fail " logs:  get def/github pr ${repo}"
         }
 }
+issueOrFail() {
+        local repo="$1"
+        get def/github issue $repo || {
+                echo "FATAL:  issue ID not specified for github repo '${repo}'" >&2
+                fail " logs:  get def/github issue ${repo}"
+        }
+}
 url() {
         local KIND="$1"; shift
         local attr="$1"; shift
@@ -537,6 +548,7 @@ url() {
            in --subpath )              subpath="$2"; shift;;
               --gitrev )               gitrev="$2";  shift;;
               --pull-request )         pull_request="$2";  shift;;
+              --issue )                issue="$2";  shift;;
               --release )              release="$2"; shift;;
               "--"* )                  fail "$0: unknown option: $1";;
               * )     break;;
@@ -550,6 +562,7 @@ url() {
                 user-github-cabal )          echo -n "https://raw.githubusercontent.com/$(get def/github user     $repo)/$repo/${gitrev}/$subpath$attr.cabal";;
                 upstream-github )            echo -n "https://github.com/$(               get def/github upstream $repo)/$repo";;
                 upstream-pull-request )      echo -n "https://github.com/$(               get def/github upstream $repo)/$repo/pull/$(prOrFail $repo)";;
+                upstream-issue )             echo -n "https://github.com/$(               get def/github upstream $repo)/$repo/issues/$(issueOrFail $repo)";;
                 commits | upstream-commits ) echo -n "https://github.com/$(               get def/github upstream $repo)/$repo/commits/master";;
                 user-commits )               echo -n "https://github.com/$(               get def/github user     $repo)/$repo/commits/master";;
                 github-prs )                 echo -n "https://github.com/$(               get def/github upstream $repo)/$repo/pulls";;
@@ -649,11 +662,10 @@ get_user_release() {
 github_pr_status() {
         local attr="$1"
         local repo="$(repoName "$attr")"
-        local user="$(get def/github user ${repo})"
         local pull_request="$(get_def def/github pr ${repo} '')"
 
 
-        local http_code="$(endpoint_head pull-merged ${attr} | grep 'HTTP/1.1')"
+        local http_code="$(endpoint_head pull-merged ${attr} --pull-request ${pull_request} | grep 'HTTP/1.1')"
 
         if   echo "${http_code}" | grep -q "204 No Content"
         then echo -n "merged"
@@ -661,6 +673,19 @@ github_pr_status() {
         then echo -n "unmerged"
         else return 1
         fi
+}
+
+github_issue_state() {
+        local attr="$1"
+        local repo="$(repoName "$attr")"
+        local issue="$(get_def def/github issue ${repo} '')"
+
+        local state="$(endpoint_head issue ${attr} --issue ${issue} | grep '^  "state": ' | cut -d'"' -f4)"
+
+        case "${state}" in
+             open | closed ) echo ${state};;
+             * )             return 1;;
+        esac
 }
 
 less2line() {
@@ -791,19 +816,20 @@ emit_explanation() {
         local over="$1"; shift
         local attr="$1"; shift
 
-        if test "${over}" = src
+        if test -z "${over}"
         then case $(status ${attr}) in
                      shadowed   ) echo "Needs bump to a versioned attribute";;
                      hackaged   ) echo "On Hackage, awaiting for import";;
                      upstreamed ) echo "Upstreamed, awaiting a Hackage release";;
                      unmerged   ) echo "Unmerged.  PR: $(url upstream-pull-request ${attr})";;
              esac
-             echo
+             local repo="$(repoName "$attr")"
+             if has def/github issue ${repo}
+             then echo "Issue: $(url upstream-issue ${attr})"
+             fi
         fi
-        {
-		get def/meta ${over}.explanation ${attr} ||
-                	faillog ${over} ${attr}
-	} | ensure_trailing_newline
+        faillog ${over} ${attr}                  | ensure_trailing_newline
+	get def/meta ${over}.explanation ${attr} | ensure_trailing_newline
 }
 emit_src_description() {
         local attr="$1";         shift
@@ -828,7 +854,7 @@ emit_property_override() {
         eval propVal=\$$propName
         if test ! -z "${propVal}" && ! has def/meta disable.${propName} ${attr}
         then
-                emit_explanation ${propName} ${attr} | sed 's/^/    ## /'
+                emit_explanation ${propName} ${attr} | prefix_lines "    ## "
                 if test ! -z "${REQUIRE_DESC}" -a ${PIPESTATUS[0]} != 0
                 then fail "missing failure log for ${attr}.${propName}, and couldn't compute it either:  nh x emit_explanation ${propName} ${attr}"
                 fi
@@ -836,14 +862,14 @@ emit_property_override() {
                         src )
                                 case "$src" in
                                         hackage )
-                                                if ! test_shadowed "${attr}"
-                                                then
+                                                if test_shadowed "${attr}"
+                                                then echo "    ##"
+                                                else
                                                 cat <<EOF
     version         = "$(get def/hackage release ${attr})";
     sha256          = "$(get def/hackage hash    ${attr})";
 EOF
-                                                fi
-                                                ;;
+                                                fi;;
                                         github )
                                                 repo=$(repoName ${attr})
                                                 cat <<EOF
@@ -856,8 +882,7 @@ EOF
 EOF
                                                 if has def/meta chdir ${attr}
                                                 then echo "    prePatch        = \"cd $(get def/meta chdir ${attr}); \";"
-                                                fi
-                                                ;;
+                                                fi;;
                                         * )     fail "unknown value for src override: '$src'";;
                                 esac;;
                         doCheck )          echo "    doCheck         = ${doCheck};";;
@@ -882,9 +907,10 @@ emit_override() {
 	then shadowed=yes; base_attr="$(shadow_name ${attr})"
         else shadowed=;    base_attr="${attr}"
         fi
+        emit_explanation ""  ${attr} | prefix_lines "  ## " # Print general context first
         if test -n "${shadowed}" && test "$(lsattrs def/over ${attr} | xargs echo -n)" = "src"
         then
-                emit_explanation src ${attr} | sed 's/^/  ## /'
+                emit_explanation src ${attr} | prefix_lines "  ## "
                 cat <<EOF
   ${attr} = super.${base_attr};
 
@@ -1298,11 +1324,11 @@ trim_single_property() {
         local over="$1"; shift
 
         echo -n "TRIM ${attr} -${over}>  "
-        if has def/meta "${over}.explanation" "${attr}"
-        then echo "SKIPPED, explanation exists:  nh x emit_explanation ${over} ${attr}"
-        elif with_field_value def/over "${over}" "${attr}" ""     coherently --reuse-cache ${attr} "${over}" override_builder ${attr} ${over}
-        then echo "OK: $(get ${SUCCTY} ${over} ${attr})"
-        else echo "FAILED"
+        if ! with_field_value def/over "${over}" "${attr}" ""     coherently --reuse-cache ${attr} "${over}" override_builder ${attr} ${over}
+        then echo "FAILED"
+        elif has def/meta "${over}.explanation" "${attr}"
+        then echo "OK-BUT, explanation exists:  nh x emit_explanation ${over} ${attr}"
+        else echo "OK: $(get ${SUCCTY} ${over} ${attr})"
         fi
 }
 trim_one() {
@@ -1316,6 +1342,13 @@ trim_one() {
 
         for over in $(lsattrs def/over ${attr})
         do trim_single_property ${attr} ${over}
+        done
+}
+remove() {
+        local attr="$1"; shift
+        local overset="${1:-$(lsattrs def/over ${attr})}"; shift
+        for over in ${overset}
+        do _set def/over ${over} ${attr} ""
         done
 }
 
@@ -1733,6 +1766,11 @@ EOF
 EOF
                    ;;
                    esac
+                   if has def/github issue ${repo}
+                   then cat <<EOF
+            issue: $(url upstream-issue ${attr})
+EOF
+                   fi
                    cat <<EOF
              meta: $(lsattrs def/meta ${attr} | xargs echo)
 EOF
@@ -2099,7 +2137,7 @@ upstream )	   HELP "upstream ATTR [REV=HEAD]"               "Set the source over
                    overrides "$attr";;
 
 section-github )
-section "Github-based (unmerged/upstream) override manipulation" github-up set-pr set-upstream set-repoName;;
+section "Github-based (unmerged/upstream) override manipulation" github-up set-pr set-issue set-upstream set-repoName;;
 
 github-up )        HELP "github-up ATTR"                         "Bump a Github override to its latest HEAD" || return 0
                    attr="$1"; repo=$(repoName ${attr})
@@ -2117,6 +2155,11 @@ set-pr )           HELP "set-pr ATTR PR#"                        "Set the PR# of
                    then _set def/github pr "$(repoName "$attr")" "$pr"
                    else fail "not unmerged: $attr"
                    fi
+                   overrides "$attr";;
+
+set-issue )        HELP "set-issue ATTR ISSUE#"                  "Set the Issue# of an attribute's Github override" || return 0
+                   attr="$1"; issue="$2"
+                   _set def/github issue "$(repoName "$attr")" "$issue"
                    overrides "$attr";;
 
 set-repoName )     HELP "set-repoName ATTR REPO"                 "Set an attribute's Github repository name" || return 0
@@ -2151,7 +2194,7 @@ expr | expression )
 		   else get ${EXPRTY}   "${over}" ${attr} | less --pattern=" ${attr} = "
 		   fi;;
 
-proof )            HELP "proof ATTR OVER" "Print the proof of necessity for an attribute's override" || return 0
+proof )            HELP "proof ATTR [OVER]" "Print an override's proof of necessity. When OVER is empty, print context." || return 0
                    attr="$1"; over="$2";
                    emit_explanation "${over}" "${attr}";;
 
@@ -2261,7 +2304,8 @@ progress )         HELP "progress"             "Observe build progress" || retur
                    else fail "Nothing to watch, exiting."
                    fi
                    echo "watching ${log}"
-                   watch --interval=1 bash -c "'cat $(cat ${PKGDB}/current.build    2>/dev/null) | nh x log_filter_progress'";;
+                   nlines=$(stty size | awk '{print $1}')
+                   watch --interval=1 --no-title bash -c "'cat $(cat ${PKGDB}/current.build    2>/dev/null) | nh x log_filter_progress' | tail -n$((nlines-1))";;
 
 watch )            HELP "watch"                "Observe the current build, as it hits the logs.." || return 0
                    if   test -f "$(cat ${PKGDB}/current.build    2>/dev/null)"
