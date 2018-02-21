@@ -986,7 +986,7 @@ emit_overrides() {
               --silent )               silent="--silent";;
               --debug )                enable_debug;;
               "--"* )                  fail "$0: unknown option: $1";;
-              ,* )                      break;;
+              * )                      break;;
            esac
            shift
         done
@@ -1399,6 +1399,13 @@ trim_one() {
 
         for over in $(lsattrs def/over ${attr})
         do trim_single_property ${attr} ${over}
+        done
+}
+remove() {
+        local attr="$1"; shift
+        local overset="${1:-$(lsattrs def/over ${attr})}"; shift
+        for over in ${overset}
+        do _set def/over ${over} ${attr} ""
         done
 }
 #+END_SRC
@@ -1973,6 +1980,7 @@ trim() {
                 echo "TRIM ${attr}> "
                 trim_one ${attr}
         done | tee ${PKGDB}/trim.log
+        overrides
 }
 #+END_SRC
 * Help system
@@ -2109,7 +2117,7 @@ chdir )            HELP "chdir ATTR SUBDIR"       "Change directory before build
   #+begin_src sh :var title=(org-tangle-item)
 section-overman )
 section "${title}" \
-         disable enable set-explanation set-erdeps ls-over get set edit \
+         disable enable remove-overrides set-explanation set-erdeps ls-over get set edit \
          dontRevision check dontCheck haddock dontHaddock jailbreak dontJailbreak chdir extraLibs;;
 
 disable )          HELP "disable ATTR[.OVER]"     "Disable all/single overrides for an attribute" || return 0
@@ -2121,6 +2129,11 @@ enable )           HELP "enable ATTR[.OVER]"      "Re-enable previously disabled
                    attr="$1"; over="${2:+.$2}"
                    _set       def/meta disable${over} "$attr" ""
                    overrides "$1";;
+
+remove )           HELP "remove ATTR[.OVER]"      "Remove specified overrides" || return 0
+                   attr="$1"; over="${2:+.$2}"
+                   remove "${attr}" "${over}"
+                   overrides "${attr}";;
 
 set-explanation )  HELP "set-explanation ATTR OVER" "Provide a manual explanation for an override's existence" || return 0
                    attr="$1"; over="$2"
