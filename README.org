@@ -1,7 +1,7 @@
 * nh: manage Nix Haskell override sets
 *** What
 
-    [[https://travis-ci.org/deepfire/corr/][https://api.travis-ci.org/deepfire/nh.svg?branch=master]]
+    [[https://travis-ci.org/deepfire/nh/][https://api.travis-ci.org/deepfire/nh.svg?branch=master]]
 
     Manage a set of Nix [[https://github.com/NixOS/nixpkgs/blob/master/pkgs/development/haskell-modules/configuration-ghc-8.4.x.nix][Haskell package overrides]], somewhat automatically.
 
