@@ -121,8 +121,6 @@ q nh hackage        ${BROKEN_SHADOWED}
 
 BROKEN_UNMERGED=composition-tree
 x nh dontCheck      ${BROKEN_UNMERGED}
-x nh disable        ${BROKEN_UNMERGED} doCheck     ## override is called doCheck
-x nh jailbreak      ${BROKEN_UNMERGED}             ## purposefully trimmable
 q nh unmerged       ${BROKEN_UNMERGED} deepfire ""
 x nh disable        ${BROKEN_UNMERGED} src
 
@@ -141,8 +139,6 @@ x build_should_pass ${BROKEN_SHADOWED}
 
 ## Unmerged
 x eval_is           "status ${BROKEN_UNMERGED}" unmerged
-x build_should_fail ${BROKEN_UNMERGED} DEPENDENCY/doctest CABAL-MISSING-DEPS
-x nh enable         ${BROKEN_UNMERGED} doCheck
-x build_should_fail ${BROKEN_UNMERGED} DIRECT             HASKELL-SMP-COULD-NOT-DEDUCE
+x build_should_fail ${BROKEN_UNMERGED} DIRECT CABAL-MISSING-DEPS
 x nh enable         ${BROKEN_UNMERGED} src
 x build_should_pass ${BROKEN_UNMERGED}
