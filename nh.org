@@ -938,7 +938,7 @@ EOF
                         revision )         echo "    revision        = ${revision};";;
                         postPatch )        echo "    postPatch       = \"${postPatch}\";";;
                         extraLibs )        echo "    libraryHaskellDepends = drv.libraryHaskellDepends ++ ${extraLibs};";;
-                        ,* ) fail "unknown property: '${propName}'";;
+                        * ) fail "unknown property: '${propName}'";;
                 esac
         fi
 }
@@ -2306,7 +2306,7 @@ rdeps | referrers )
 *** Override database maintenance
   #+begin_src sh :var title=(org-tangle-item)
 section-maintain )
-section "${title}" instantiate acme baseline trim trim-single show-trims execute-trims audit;;
+section "${title}" instantiate acme baseline trim trim-single show-trims execute-trims audit extra-validation-attributes;;
 
 instantiate )      HELP "instantiate [--reuse-cache] [ATTR..]" "Instantiate overridden attrs (or specified subset)" || return 0
                    instantiate "$@";;
@@ -2335,6 +2335,10 @@ execute-trims )    HELP "execute-trims" "Execute the suggestion" || return 0
 audit )            HELP "audit [--autofix] [--autoonly] [--skip-baseline] [--reuse-{overrides,cache}] [ATTR]" \
                            "Sanity check the overridden attrs (or specified subset).  --autofix applies suggestions" || return 0
                    audit "$@";;
+
+extra-validation-attributes )
+                   HELP "extra-validation-attributes" "Edit the set of attributes validated regardless of being overridden" || return 0
+                   edit def/meta extra-validation-attributes "";;
 #+end_src
 *** Generation of overrides
   #+begin_src sh :var title=(org-tangle-item)

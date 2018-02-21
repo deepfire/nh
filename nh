@@ -2171,7 +2171,7 @@ rdeps | referrers )
                    do_instantiate ${attr} | xargs nix-store --query --referrers;;
 
 section-maintain )
-section "Override database maintenance" instantiate acme baseline trim trim-single show-trims execute-trims audit;;
+section "Override database maintenance" instantiate acme baseline trim trim-single show-trims execute-trims audit extra-validation-attributes;;
 
 instantiate )      HELP "instantiate [--reuse-cache] [ATTR..]" "Instantiate overridden attrs (or specified subset)" || return 0
                    instantiate "$@";;
@@ -2200,6 +2200,10 @@ execute-trims )    HELP "execute-trims" "Execute the suggestion" || return 0
 audit )            HELP "audit [--autofix] [--autoonly] [--skip-baseline] [--reuse-{overrides,cache}] [ATTR]" \
                            "Sanity check the overridden attrs (or specified subset).  --autofix applies suggestions" || return 0
                    audit "$@";;
+
+extra-validation-attributes )
+                   HELP "extra-validation-attributes" "Edit the set of attributes validated regardless of being overridden" || return 0
+                   edit def/meta extra-validation-attributes "";;
 
 section-generate )
 section "Generation of overrides" over overrides overrides-descs cache show-cache;;
