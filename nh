@@ -240,6 +240,8 @@ if ! type nix-prefetch-git >/dev/null
 then fail "missing tool:  nix-prefetch-git   (fix: nix-env -i nix-prefetch-scripts)"
 fi
 
+GHC_CONFIG_FULL_PATH=${NIXPKGS}/pkgs/development/haskell-modules/${GHC_CONFIG}
+
 NIX_BUILD_OPTIONS="--argstr compiler ghc${GHC} --show-trace --cores 0"
 
 ensure_trailing_newline() {
@@ -452,9 +454,31 @@ stdin_forall_set() {
         done
 }
 
+test_is_local() {
+	has def/meta local "$1"
+}
+test_is_nonlocal() {
+	! has def/meta local "$1"
+}
+set_local() {
+	_set def/meta local "$1" local
+}
+set_nonlocal() {
+	_set def/meta local "$1" ""
+}
+
 filter() {
         for attr in $(_ls)
         do if "$@" ${attr} > /dev/null
+           then echo ${attr}
+           fi
+        done
+}
+filter_by_and() {
+        pred="$1"; shift
+        for attr in $(_ls)
+        do if ${pred} ${attr} > /dev/null \
+              && "$@" ${attr} > /dev/null
            then echo ${attr}
            fi
         done
@@ -945,11 +969,23 @@ EOF
         fi
 }
 do_emit_overrides() {
+        predicate="true"
+        while test $# -ge 1
+        do case "$1"
+           in --target )               case "$2" in
+                                           local )   predicate=test_is_local;    shift;;
+                                           nixpkgs ) predicate=test_is_nonlocal; shift;;
+                                           * ) fail "unexpected --target: '$2'";; esac;;
+              "--"* )                  fail "$0: unknown option: $1";;
+              * )                      break;;
+           esac
+           shift
+        done
         cat <<EOF
   ## Shadowed:
 
 EOF
-        for attr in $(filter test_is shadowed status)
+        for attr in $(filter_by_and ${predicate} test_is shadowed status)
         do get cache override ${attr} || fail_uncached ${attr}; echo -n . >&2
         done
 
@@ -958,7 +994,7 @@ EOF
   ## On Hackage:
 
 EOF
-        for attr in $(filter test_is hackaged status)
+        for attr in $(filter_by_and ${predicate} test_is hackaged status)
         do get cache override ${attr} || fail_uncached ${attr}; echo -n . >&2
         done
 
@@ -967,7 +1003,7 @@ EOF
   ## Upstreamed
 
 EOF
-        for attr in $(filter test_is upstreamed status)
+        for attr in $(filter_by_and ${predicate} test_is upstreamed status)
         do get cache override ${attr} || fail_uncached ${attr}; echo -n . >&2
         done
 
@@ -976,7 +1012,7 @@ EOF
   ## Unmerged
 
 EOF
-        for attr in $(filter test_is unmerged status)
+        for attr in $(filter_by_and ${predicate} test_is unmerged status)
         do get cache override ${attr} || fail_uncached ${attr}; echo -n . >&2
         done
 
@@ -985,27 +1021,30 @@ EOF
   ## Non-code, configuration-only change
 
 EOF
-        for attr in $(overset_config) ## same as filter test_is config status', but faster
+        for attr in $(filter_by_and ${predicate} test_is config status)
         do get cache override ${attr} || fail_uncached ${attr}; echo -n . >&2
         done
 }
 emit_overrides() {
         local emit_acme=
+        local format=overrides
+        local nixpkgs=
         local reuse_cache=
         local require_descs=
-        local format=overrides
-        local suppress_content=
         local silent=
+        local target=
         while test $# -ge 1
         do case "$1"
-           in --reuse-cache )          reuse_cache="--reuse-cache";;
-              --require-descs )        require_descs="--require-descs";;
+           in --emit-acme )            emit_acme="--emit-acme";;
               --format )               format=$2; shift;;
-              --emit-acme )            emit_acme="--emit-acme";;
-              --suppress-content )     suppress_content="--suppress-content";;
+              --nixpkgs )              true;;                             ## Expected to be handled by caller
+              --reuse-cache )          reuse_cache="--reuse-cache";;
+              --require-descs )        require_descs="--require-descs";;
               --silent )               silent="--silent";;
+              --target )               case "$2" in
+                                           local | nixpkgs ) target=$2; shift;;
+                                           * ) fail "unexpected --target: '$2'";; esac;;
               --debug )                enable_debug;;
-              --disable-ghc-configuration ) true;; # Already handled
               "--"* )                  fail "$0: unknown option: $1";;
               * )                      break;;
            esac
@@ -1048,7 +1087,7 @@ EOF
         echo
 
         if test -z "${suppress_content}"
-        then do_emit_overrides
+        then do_emit_overrides ${target:+--target ${target}}
         fi
 
         if test -n "${emit_acme}"
@@ -1766,6 +1805,10 @@ info() {
                    cat <<EOF
 attribute '${attr}':
 
+           target: $(if test_is_local ${attr}
+                     then echo 'local overrides'
+                     else echo 'nixpkgs'
+                     fi)
            status: $(status  ${attr})
         overrides: $(lsattrs def/over ${attr} | xargs echo)
   nixpkgs release: $(get_nixpkgs_release ${attr})
@@ -1890,18 +1933,18 @@ loop_hunter() {
         done
 }
 
-overrides() {
-        emit_overrides --format overrides "$@"                       > ${NIX_GHC_OVERRIDES}
+apply() {
+        local nixpkgs=
         for x in "$@"
-        do if test "$x" = "--disable-ghc-configuration"
-           then emit_overrides --format configuration-ghc --suppress-content --reuse-cache > ${NIXPKGS}/pkgs/development/haskell-modules/${GHC_CONFIG}
+        do if test "$x" = "--nixpkgs"
+           then nixpkgs="--nixpkgs"
            fi; done
-        cp -f ${NIX_GHC_OVERRIDES} ${PKGDB}/overrides.nix
-}
 
-ghc_configuration() {
-        emit_overrides --format configuration-ghc                    > ${NIXPKGS}/pkgs/development/haskell-modules/${GHC_CONFIG}
-        emit_overrides --format overrides --suppress-content --reuse-cache > ${NIX_GHC_OVERRIDES}
+        emit_overrides      --format overrides         ${nixpkgs:+--target local}   "$@"          > ${NIX_GHC_OVERRIDES}
+        if test -n "${nixpkgs}"
+        then emit_overrides --format configuration-ghc ${nixpkgs:+--target nixpkgs} --reuse-cache > ${GHC_CONFIG_FULL_PATH}
+        fi
+        cp -f ${NIX_GHC_OVERRIDES} ${PKGDB}/overrides.nix
 }
 
 trim() {
@@ -1941,7 +1984,7 @@ trim() {
                 echo "TRIM ${attr}> "
                 trim_one ${attr}
         done | tee ${PKGDB}/trim.log
-        overrides
+        apply
 }
 
 print_command_help() {
@@ -2045,7 +2088,7 @@ sanity-check )     # HELP "sanity-check"       "Internal consistency checking (n
                    fail "NOT-IMPLEMENTED-BUT-SORELY-NEEDED";;
 
 section-meta )
-section "Metadata manipulation" ls-meta meta set-meta edit-meta;;
+section "Metadata manipulation" ls-meta meta set-meta edit-meta chdir local nonlocal;;
 
 ls-meta )          HELP "ls-meta ATTR"             "List attribute's metadata (as opposed to overrides" || return 0
                    lsattrs    def/meta  "$1";;
@@ -2059,8 +2102,15 @@ set-meta )         HELP "set-meta ATTR META VAL"   "Set a single metadata entry 
 edit-meta )        HELP "edit-meta ATTR META"      "Edit the current attribute's meta value using readline" || return 0
                    edit       def/meta  "$2" "$1";;
 
-chdir )            HELP "chdir ATTR SUBDIR"       "Change directory before build;  \"\" removes the override" || return 0
-                   _set def/meta chdir           "$1" "$2";   overrides "$1";;
+chdir )            HELP "chdir ATTR SUBDIR"        "Change directory before build;  \"\" removes the override" || return 0
+                   _set def/meta chdir       "$1" "$2"
+                   apply "$1";;
+
+local )            HELP "local ATTR"               "Mark ATTR as local: not subject for Nixpkgs GHC configuration" || return 0
+                   _set def/meta local       "$1" local;;
+
+nonlocal )         HELP "nonlocal ATTR"            "Remove marking of ATTR as local" || return 0
+                   _set def/meta local       "$1" "";;
 
 section-overman )
 section "Override manipulation (low level)" \
@@ -2070,17 +2120,17 @@ section "Override manipulation (low level)" \
 disable )          HELP "disable ATTR[.OVER]"     "Disable all/single overrides for an attribute" || return 0
                    attr="$1"; over="${2:+.$2}"
                    _set       def/meta disable${over} "$attr" true
-                   overrides "$1";;
+                   apply "$1";;
 
 enable )           HELP "enable ATTR[.OVER]"      "Re-enable previously disabled overrides" || return 0
                    attr="$1"; over="${2:+.$2}"
                    _set       def/meta disable${over} "$attr" ""
-                   overrides "$1";;
+                   apply "$1";;
 
 remove )           HELP "remove ATTR[.OVER]"      "Remove specified overrides" || return 0
                    attr="$1"; over="${2:+.$2}"
                    remove "${attr}" "${over}"
-                   overrides "${attr}";;
+                   apply "${attr}";;
 
 set-explanation )  HELP "set-explanation ATTR OVER" "Provide a manual explanation for an override's existence" || return 0
                    attr="$1"; over="$2"
@@ -2097,39 +2147,38 @@ get )              HELP "get ATTR OVER"           "Get an attribute's override v
                    get        def/over  "$2" "$1";;
 
 set )              HELP "set ATTR OVER VAL"       "Set an attribute's override value;  \"\" removes the override" || return 0
-                   _set       def/over  "$2" "$1" "$3"
-                   overrides "$1";;
+                   _set       def/over  "$2" "$1" "$3";       apply "$1";;
 
 edit )             HELP "edit ATTR OVER"          "Edit the current attribute's value using readline" || return 0
-                   edit def/over                 "$2" "$1";;
+                   edit def/over                 "$2" "$1";   apply "$1";;
 
 dontRevision )     HELP "edit ATTR OVER"          "Edit the current attribute's value using readline" || return 0
                    _set def/over revision        "$1" "null"
-                   _set def/over editedCabalFile "$1" "null"; overrides "$1";;
+                   _set def/over editedCabalFile "$1" "null"; apply "$1";;
 
 check | doCheck )  HELP "check ATTR"              "Disable an existing dontCheck override" || return 0
-                   _set def/over doCheck         "$1";        overrides "$1";;
+                   _set def/over doCheck         "$1";        apply "$1";;
 
 dontCheck )        HELP "dontCheck ATTR"          "Disable tests" || return 0
-                   _set def/over doCheck         "$1" false;  overrides "$1";;
+                   _set def/over doCheck         "$1" false;  apply "$1";;
 
 haddock | doHaddock )
                    HELP "haddock ATTR"            "Disable an existing dontHaddock override" || return 0
-                   _set def/over doHaddock       "$1";        overrides "$1";;
+                   _set def/over doHaddock       "$1";        apply "$1";;
 
 dontHaddock )      HELP "dontHaddock ATTR"        "Disable Haddock generation" || return 0
-                   _set def/over doHaddock       "$1" false;  overrides "$1";;
+                   _set def/over doHaddock       "$1" false;  apply "$1";;
 
 jailbreak | doJailbreak )
                    HELP "jailbreak ATTR"          "Turn on jailbreaking" || return 0
-                   _set def/over jailbreak       "$1" true;   overrides "$1";;
+                   _set def/over jailbreak       "$1" true;   apply "$1";;
 
 dontJailbreak )    HELP "dontJailbreak ATTR"      "Disable an existing jailbreak override" || return 0
-                   _set def/over jailbreak       "$1";        overrides "$1";;
+                   _set def/over jailbreak       "$1";        apply "$1";;
 
 extraLibs )        HELP "extraLibs ATTR '[ .. ]'" \
                                                   "Specify extra dependencies;  \"\" removes the override" || return 0
-                   _set def/over extraLibs       "$1" "$2";   overrides "$1";;
+                   _set def/over extraLibs       "$1" "$2";   apply "$1";;
 
 section-status )
 section "Attribute status classification" status ls-shadowed ls-hackaged ls-upstreamed ls-unmerged ls-config;;
@@ -2158,7 +2207,7 @@ section "Override manipulation (high-level)" hackage unmerged upstream;;
 hackage )	   HELP "hackage ATTR [RELEASE=upstream-latest]" "Set the source override to a Hackage release" || return 0
                    attr="$1"; release="${2:-$(get_upstream_release ${attr})}"
                    hackage "$attr" "$release"
-                   overrides "$attr";;
+                   apply "$attr";;
 
 unmerged )	   HELP "unmerged ATTR USER PR# [REV=HEAD]"      "Set the source override to a 3rd-party Github commit" || return 0
                    attr="$1"; user="$2"; pr="$3"; rev="$4"
@@ -2166,14 +2215,14 @@ unmerged )	   HELP "unmerged ATTR USER PR# [REV=HEAD]"      "Set the source over
                            fail "Usage: $0 unmerged ATTR GH-USER PR-ID [GITREV]"
                    github "$attr" "$user" "$rev"
                    _set def/github pr "$(repoName "$attr")" "$pr"
-                   overrides "$attr";;
+                   apply "$attr";;
 
 upstream )	   HELP "upstream ATTR [REV=HEAD]"               "Set the source override to an upstream Github commit" || return 0
                    attr="$1"; rev="$2"
                    repo=$(repoName ${attr})
                    user=$(get def/github upstream $repo)
                    github "$attr" "$user" "$rev"
-                   overrides "$attr";;
+                   apply "$attr";;
 
 section-github )
 section "Github-based (unmerged/upstream) override manipulation" github-up set-pr set-issue set-upstream set-repoName;;
@@ -2181,12 +2230,12 @@ section "Github-based (unmerged/upstream) override manipulation" github-up set-p
 github-up )        HELP "github-up ATTR"                         "Bump a Github override to its latest HEAD" || return 0
                    attr="$1"; repo=$(repoName ${attr})
                    github "$repo" "$(get def/github user $repo)"
-                   overrides "$attr";;
+                   apply "$attr";;
 
 set-upstream )     HELP "set-upstream ATTR GITHUB-USER"          "Specify an attribute's Github upstream username" || return 0
                    attr="$1"; upstream="$2"
                    _set def/github upstream $(repoName "$attr") "$upstream"
-                   overrides "$attr";;
+                   apply "$attr";;
 
 set-pr )           HELP "set-pr ATTR PR#"                        "Set the PR# of an attribute's Github override" || return 0
                    attr="$1"; pr="$2"
@@ -2194,16 +2243,16 @@ set-pr )           HELP "set-pr ATTR PR#"                        "Set the PR# of
                    then _set def/github pr "$(repoName "$attr")" "$pr"
                    else fail "not unmerged: $attr"
                    fi
-                   overrides "$attr";;
+                   apply "$attr";;
 
 set-issue )        HELP "set-issue ATTR ISSUE#"                  "Set the Issue# of an attribute's Github override" || return 0
                    attr="$1"; issue="$2"
                    _set def/github issue "$(repoName "$attr")" "$issue"
-                   overrides "$attr";;
+                   apply "$attr";;
 
 set-repoName )     HELP "set-repoName ATTR REPO"                 "Set an attribute's Github repository name" || return 0
                    attr="$1"; repo="$2";     _set def/meta repoName "$attr" "$repo"
-                   overrides "$attr";;
+                   apply "$attr";;
 
 section-build )
 section "Build & results" build log fail failure-type failure-log expression proof;;
@@ -2283,7 +2332,7 @@ show-trims )       HELP "show-trims" "Show the trim suggestion" || return 0
 
 execute-trims )    HELP "execute-trims" "Execute the suggestion" || return 0
                    execute_trims "$@"
-                   overrides;;
+                   apply;;
 
 audit )            HELP "audit [--autofix] [--autoonly] [--skip-baseline] [--reuse-{overrides,cache}] [ATTR]" \
                            "Sanity check the overridden attrs (or specified subset).  --autofix applies suggestions" || return 0
@@ -2294,21 +2343,17 @@ extra-validation-attributes )
                    edit def/meta extra-validation-attributes "";;
 
 section-generate )
-section "Generation of overrides" over overrides ghc-configuration cache show-cache;;
+section "Generation of overrides" over apply cache show-cache;;
 
 over | override | show-override )
                    HELP "over | override | show-override ATTR" \
                            "Print the attribute's override defined by PKGDB" || return 0
                    emit_override "$1";;
 
-overrides )        HELP "overrides [--reuse-cache] [--disable-ghc-configuration]" \
-                           "Generate ${NIX_GHC_OVERRIDES}.  --disable-ghc-configuration neuters ${GHC_CONFIG}" || return 0
-                   overrides                   "$@";;
-
-ghc-configuration )
-                   HELP "ghc-configuration [--reuse-cache]" \
-                           "Generate ${GHC_CONFIG}.  Neuters ${NIX_GHC_OVERRIDES}" || return 0
-                   ghc_configuration           "$@";;
+apply | overrides )
+                   HELP "apply [--reuse-cache] [--nixpkgs]" \
+                           "Apply all overrides via ${NIX_GHC_OVERRIDES}.  If --nixpkgs is passed, non-local overrides instead serve as definition for ${GHC_CONFIG_FULL_PATH}" || return 0
+                   apply "$@";;
 
 cache )            HELP "cache [--require-descs]" \
                            "Regenerate override cache" || return 0
@@ -2324,7 +2369,7 @@ eval | x )         HELP "eval 'BASH-EXPR'"     "Passthrough, to execute anything
                    "$@";;
 
 shell )            HELP "shell"                "Nix shell with up-to-date overrides (shell.nix required)" || return 0
-                   overrides "$@"
+                   apply "$@"
                    nix-shell --max-jobs 4 --cores 0 --keep-going;;
 
 cabal2shell )      HELP "cabal2shell"          "Nix shell from a cabal file (nothing else required)" || return 0
@@ -2332,7 +2377,7 @@ cabal2shell )      HELP "cabal2shell"          "Nix shell from a cabal file (not
 
 shell-failures )   HELP "shell-failures"       "Entering nix-shell, filtering the build log for failures" || return 0
                    build_log="${1:-shell-failures.log}"; shift
-                   overrides "$@"
+                   apply "$@"
                    nix-shell --max-jobs 4 --cores 0 --keep-going 2>&1 | tee ${build_log} |
                                log_filter_progress;;
 
