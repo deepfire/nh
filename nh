@@ -196,17 +196,30 @@ in
 EOF
 }
 
+###
+### Messy conflation of three requirements:
+###  - find .nh in the parent directory hierarhy
+###  - save NH_ROOT
+###  - handle --init for depth=1
+###
 if   test -f .nh
-then true
-elif test "$1" = "--auto-init"
+then NH_ROOT="$(realpath .)"
+elif test "$1" = "--init"
 then shift
      emit_nh_config      "pkgdb" > .nh
      emit_packages_nix           > packages.nix
      if ! validate_pkgdb "pkgdb"
      then init_pkgdb     "pkgdb" --force
      fi
-else cat << EOF
-ERROR: the .nh configuration file is not present in the working directory.
+else NH_ROOT=$(realpath ..)
+     while true
+     do if   test -f ${NH_ROOT}/.nh
+        then source  ${NH_ROOT}/.nh; break
+        fi
+        if   test    ${NH_ROOT} = "/"
+        then  cat << EOF
+ERROR: the .nh configuration file is present neither in the working directory,
+       nor in the containing hierarchy.
 
 Consider the following:  cat > .nh
 
@@ -217,13 +230,16 @@ Don't have packages.nix?  cat > packages.nix
 $(emit_packages_nix)
 
 EOF
-     exit 1
+              exit 1
+        fi
+        NH_ROOT=$(realpath ${NH_ROOT}/..)
+     done
 fi
-
-source .nh
 
 if test "$1" = "init"
 then shift; init_pkgdb "$@"; fi
+
+source ${NH_ROOT}/.nh
 
 if test -z "${PKGDB}" || ! validate_pkgdb "${PKGDB}"
 then fail_untraced ".nh doesn't define PKGDB to point to a valid package database."; fi
@@ -1640,7 +1656,7 @@ audit() {
         if   test -z "${skip_baseline}"
         then baseline  ${reuse_cache} ${reuse_overrides}
         elif test -z "${reuse_overrides}"
-        then overrides ${reuse_cache}
+        then apply     ${reuse_cache}
         fi
 
         for attr in ${ATTRSET}
@@ -1660,7 +1676,7 @@ acme() {
         done
 
         if test -z "${reuse_overrides}"
-        then overrides ${reuse_cache} --emit-acme
+        then apply ${reuse_cache} --emit-acme
         fi
 
         attr=${ACME_ATTRIBUTE}
@@ -1698,7 +1714,7 @@ baseline() {
         fi
 
         if test -z "${reuse_overrides}"
-        then overrides ${reuse_cache}
+        then apply ${reuse_cache}
         fi
 
         echo "-( validating baseline: all PKGDB overrides applied"
@@ -1713,11 +1729,12 @@ baseline() {
 }
 
 cabal2shell() {
+        ## XXX:  ultra-messy
         # ATEXIT_REMOVE_FILES="default.nix shell.nix overrides.nix"
 	# trap atexit_remove_files EXIT
         cabal2nix . "$@" > default.nix
         emit_shell_nix   > shell.nix
-        nh overrides
+        apply
         nix-shell ${NIX_BUILD_OPTIONS}
 }
 
@@ -1901,7 +1918,7 @@ instantiate() {
         if test -z "${reuse_cache}"
         then cache
         fi
-        overrides --reuse-cache ${debug}
+        apply --reuse-cache ${debug}
 
         for attr in ${ATTRSET}
         do
