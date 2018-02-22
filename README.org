@@ -222,6 +222,9 @@ Usage:  nh [--cls] [--trace] [--debug] SUBCMD [SUBARGS..]
    meta ATTR META            Print a single metadata entry of an attribute
    set-meta ATTR META VAL    Set a single metadata entry of an attribute
    edit-meta ATTR META       Edit the current attribute's meta value using readline
+   chdir ATTR SUBDIR         Change directory before build;  "" removes the override
+   local ATTR                Mark ATTR as local: not subject for Nixpkgs GHC configuration
+   nonlocal ATTR             Remove marking of ATTR as local
 
   Override manipulation (low level):
 
@@ -241,7 +244,6 @@ Usage:  nh [--cls] [--trace] [--debug] SUBCMD [SUBARGS..]
    dontHaddock ATTR          Disable Haddock generation
    jailbreak ATTR            Turn on jailbreaking
    dontJailbreak ATTR        Disable an existing jailbreak override
-   chdir ATTR SUBDIR         Change directory before build;  "" removes the override
    extraLibs ATTR '[ .. ]'   Specify extra dependencies;  "" removes the override
 
   Attribute status classification:
@@ -264,10 +266,10 @@ Usage:  nh [--cls] [--trace] [--debug] SUBCMD [SUBARGS..]
   Github-based (unmerged/upstream) override manipulation:
 
    github-up ATTR            Bump a Github override to its latest HEAD
-   set-pr ATTR PR#           Set the PR# of an attribute's Github override
-   set-issue ATTR ISSUE#     Set the Issue# of an attribute's Github override
    set-upstream ATTR GITHUB-USER
                              Specify an attribute's Github upstream username
+   set-pr ATTR PR#           Set the PR# of an attribute's Github override
+   set-issue ATTR ISSUE#     Set the Issue# of an attribute's Github override
    set-repoName ATTR REPO    Set an attribute's Github repository name
 
   Build & results:
@@ -313,10 +315,8 @@ Usage:  nh [--cls] [--trace] [--debug] SUBCMD [SUBARGS..]
 
    over | override | show-override ATTR
                              Print the attribute's override defined by PKGDB
-   overrides [--reuse-cache] [--disable-ghc-configuration]
-                             Generate overrides.nix.  --disable-ghc-configuration neuters configuration-ghc-8.4.x.nix
-   ghc-configuration [--reuse-cache]
-                             Generate configuration-ghc-8.4.x.nix.  Neuters overrides.nix
+   apply [--reuse-cache] [--nixpkgs]
+                             Apply all overrides via overrides.nix.  If --nixpkgs is passed, non-local overrides instead serve as definition for /home/deepfire/nixpkgs/pkgs/development/haskell-modules/configuration-ghc-8.4.x.nix
    cache [--require-descs]   Regenerate override cache
    show-cache ATTR           Print the cached text of attribute's override (DEBUG)
 
@@ -325,6 +325,7 @@ Usage:  nh [--cls] [--trace] [--debug] SUBCMD [SUBARGS..]
    eval 'BASH-EXPR'          Passthrough, to execute anything defined.
    shell                     Nix shell with up-to-date overrides (shell.nix required)
    cabal2shell               Nix shell from a cabal file (nothing else required)
+   shell-failures            Entering nix-shell, filtering the build log for failures
    loop-hunter               Detect attribute loops:  nix-shell 2>&1 | nh loop-hunter
    progress                  Observe build progress
    watch                     Observe the current build, as it hits the logs..
