@@ -2064,7 +2064,7 @@ chdir )            HELP "chdir ATTR SUBDIR"       "Change directory before build
 
 section-overman )
 section "Override manipulation (low level)" \
-         disable enable remove-overrides set-explanation set-erdeps ls-over get set edit \
+         disable enable remove set-explanation set-erdeps ls-over get set edit \
          dontRevision check dontCheck haddock dontHaddock jailbreak dontJailbreak chdir extraLibs;;
 
 disable )          HELP "disable ATTR[.OVER]"     "Disable all/single overrides for an attribute" || return 0

@@ -13,7 +13,7 @@
     Definitions are managed somewhat conveniently, like:
 
     : nh hackage    foo 1.2.14
-    : nh hackage-up foo
+    : nh hackage    foo                               # Pull the latest one
     : nh unmerged   bar concerned-citizen PR-number
 
 *** Brutal, no-nonsense introduction
@@ -27,15 +27,16 @@
 
     2. Add overrides:
 
-       : nh hackage-up lens                            # easy: there's a Hackage release, get the latest
+       : nh hackage lens                               # easy: there's a Hackage release, get the latest
 
        : nh set-upstream microlens-th aelve
-       : nh upstream     microlens-th master           # Fetch the tip of upstream's master
+       : nh upstream     microlens-th master           # Fetch the tip of upstream's master (any refspec goes)
        : nh set-repoName microlens-th microlens        # A single repository carries several packages.
        : nh chdir        microlens-th microlens-th
+       : nh set-issue    microlens-th 222              # Specify the relevant upstream issue ID
 
        : nh set-upstream hedgehog hedgehogqa
-       : nh unmerged     hedgehog gwils 134 [GIT-REV]  # the third argument to =unmerged= is the Github PR #
+       : nh unmerged     hedgehog gwils 134 [GIT-REV]  # the third argument to "unmerged" is the Github PR #
 
     3. Observe the changes:
 
@@ -46,11 +47,25 @@
        ..and you always can generate =overrides.nix= from the very latest package
        database -- although it happens transparently most of the time:
 
-       : nh overrides
+       : nh overrides [--disable-ghc-configuration]
+
+       The =--disable-ghc-configuration= switch will position your override set as
+       a /replacement/ to the global, version-specific GHC configuration.
+
+       You can also choose to set this GHC configuration instead of local
+       =overrides.nix=.  This will also helpfully empty/neuter =overrides.nix=:
+
+       : nh ghc-configuration
 
     4. Validate if the overridden packages build now:
 
-       : nh baseline [NAME..]                          # Defaults to building everything
+       : nh baseline [NAME..]                          # Defaults to building everything, stepwise
+       : nh build NAME                                 # ..as an alternative.
+
+       ..or..
+
+       : nh acme                                       # Build everything in parallel
+       : nh progress                                   # ..and watch progress in another terminal
 
     5. See what the audit tool thinks about the situation:
 
@@ -87,7 +102,7 @@
        : nh set-explanation broken-attribute doCheck
 
        Rinse, repeat -- and remember that individual attributes can be rebuilt
-       using =nh baseline=.
+       using =nh baseline= or =nh build=.
 
        Also, explanations (aka proofs of override) can be shown per-override with:
 
@@ -212,6 +227,7 @@ Usage:  nh [--cls] [--trace] [--debug] SUBCMD [SUBARGS..]
 
    disable ATTR[.OVER]       Disable all/single overrides for an attribute
    enable ATTR[.OVER]        Re-enable previously disabled overrides
+   remove ATTR[.OVER]        Remove specified overrides
    set-explanation ATTR OVER Provide a manual explanation for an override's existence
    set-erdeps ATTR 'ATTR..'  Set attribute's essential rev-deps that must keep working
    ls-over ATTR              List attribute's overrides
@@ -249,6 +265,7 @@ Usage:  nh [--cls] [--trace] [--debug] SUBCMD [SUBARGS..]
 
    github-up ATTR            Bump a Github override to its latest HEAD
    set-pr ATTR PR#           Set the PR# of an attribute's Github override
+   set-issue ATTR ISSUE#     Set the Issue# of an attribute's Github override
    set-upstream ATTR GITHUB-USER
                              Specify an attribute's Github upstream username
    set-repoName ATTR REPO    Set an attribute's Github repository name
@@ -265,12 +282,12 @@ Usage:  nh [--cls] [--trace] [--debug] SUBCMD [SUBARGS..]
                              Obtain trim failure log of an override
    expression ATTR [OVER=baseline]
                              See the the expression defining an override's trim
-   proof ATTR OVER           Print the proof of necessity for an attribute's override
+   proof ATTR [OVER]         Print an override's proof of necessity. When OVER is empty, print context.
 
   Nix-level inferences:
 
    drv ATTR                  Store derivation for a single override
-   src-drv ATTR              Store source derivation for a single override
+   src ATTR                  Store source derivation for a single override
    deps | refs | references ATTR
                              Store dependencies of an override
    rdeps | referrers ATTR    Store reverse dependencies of an override
@@ -289,13 +306,17 @@ Usage:  nh [--cls] [--trace] [--debug] SUBCMD [SUBARGS..]
    execute-trims             Execute the suggestion
    audit [--autofix] [--autoonly] [--skip-baseline] [--reuse-{overrides,cache}] [ATTR]
                              Sanity check the overridden attrs (or specified subset).  --autofix applies suggestions
+   extra-validation-attributes
+                             Edit the set of attributes validated regardless of being overridden
 
   Generation of overrides:
 
    over | override | show-override ATTR
                              Print the attribute's override defined by PKGDB
-   overrides [--reuse-cache] Generate overrides.nix
-   overrides-descs           As overrides, but mandate that every override comes with a proof
+   overrides [--reuse-cache] [--disable-ghc-configuration]
+                             Generate overrides.nix.  --disable-ghc-configuration neuters configuration-ghc-8.4.x.nix
+   ghc-configuration [--reuse-cache]
+                             Generate configuration-ghc-8.4.x.nix.  Neuters overrides.nix
    cache [--require-descs]   Regenerate override cache
    show-cache ATTR           Print the cached text of attribute's override (DEBUG)
 
