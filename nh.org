@@ -8,6 +8,7 @@
 set -e
 
 DEFAULT_GHC=841  ## The value is actually configured, so this is for the absolute defaults.
+DEFAULT_GHC_CONFIG=configuration-ghc-8.4.x.nix
 ACME_ATTRIBUTE=nh-acme-grand-total-attribute
 
 #+end_src
@@ -163,6 +164,7 @@ emit_nh_config() {
         local PKGDB="$1"
         cat <<EOF
 GHC=${DEFAULT_GHC}
+GHC_CONFIG=${DEFAULT_GHC_CONFIG}
 PKGDB=${PKGDB}  # The override state database.
 NIX_GHC_OVERRIDES=overrides.nix        # The job of 'nh' is to help you maintain this.
 NIX_GHC_PACKAGE_SET=packages.nix       # Define a proper GHC package set.
@@ -536,6 +538,19 @@ status() {
                   fi;;
         * )       echo "FATAL: invalid status for '${attr}': '$(get def/over src ${attr})'";;
         esac
+}
+ls_essential_reverse_deps() {
+        for attr in $(_ls)
+        do get def/meta erdeps ${attr} | xargs echo
+        done | sed $'s/ /\\\n/'g | sort | uniq
+}
+ls_extra_validation_attributes() {
+        get_def def/meta extra-validation-attributes
+}
+ls_acme_deps() {
+        _ls
+        ls_essential_reverse_deps
+        ls_extra_validation_attributes
 }
       #+END_SRC
 ***** Logs
@@ -1002,41 +1017,8 @@ EOF
 EOF
         fi
 }
-emit_overrides() {
-        local reuse_cache=
-        local require_descs=
-        local silent=
-        while test $# -ge 1
-        do case "$1"
-           in --reuse-cache )          reuse_cache="--reuse-cache";;
-              --require-descs )        require_descs="--require-descs";;
-              --emit-acme )            emit_acme="--emit-acme";;
-              --silent )               silent="--silent";;
-              --debug )                enable_debug;;
-              "--"* )                  fail "$0: unknown option: $1";;
-              * )                      break;;
-           esac
-           shift
-        done
-
-        ###
-        ### 1. Generate override cache
-        ###
-        if test -z "${reuse_cache}"
-        then cache ${require_descs} ${silent} "$@" ||
-                 fail "cache generation failed" >&2
-        fi
-
-        echo -n "Assembling overrides.." >&2
-        ###
-        ### 2. Emit overrides
-        ###
-
+do_emit_overrides() {
         cat <<EOF
-{ pkgs, haskellLib, super, self }:
-
-with haskellLib; with self; {
-
   ## Shadowed:
 
 EOF
@@ -1079,6 +1061,68 @@ EOF
         for attr in $(overset_config) ## same as filter test_is config status', but faster
         do get cache override ${attr} || fail_uncached ${attr}; echo -n . >&2
         done
+}
+emit_overrides() {
+        local emit_acme=
+        local reuse_cache=
+        local require_descs=
+        local format=overrides
+        local suppress_content=
+        local silent=
+        while test $# -ge 1
+        do case "$1"
+           in --reuse-cache )          reuse_cache="--reuse-cache";;
+              --require-descs )        require_descs="--require-descs";;
+              --format )               format=$2; shift;;
+              --emit-acme )            emit_acme="--emit-acme";;
+              --suppress-content )     suppress_content="--suppress-content";;
+              --silent )               silent="--silent";;
+              --debug )                enable_debug;;
+              --disable-ghc-configuration ) true;; # Already handled
+              "--"* )                  fail "$0: unknown option: $1";;
+              * )                      break;;
+           esac
+           shift
+        done
+
+        ###
+        ### 1. Generate override cache
+        ###
+        if test -z "${reuse_cache}"
+        then cache ${require_descs} ${silent} "$@" ||
+                 fail "cache generation failed" >&2
+        fi
+
+        echo -n "Assembling overrides.." >&2
+        ###
+        ### 2. Emit overrides
+        ###
+        case ${format} in
+        overrides )
+                cat <<EOF
+{ pkgs, haskellLib, super, self }:
+
+with haskellLib; with self; {
+EOF
+                           ;;
+        configuration-ghc )
+                cat <<EOF
+{ pkgs, haskellLib }:
+
+with haskellLib;
+
+self: super: {
+
+EOF
+                emit_ghc_configuration_fixed_content;;
+        * )
+                fail "Unsupported --format for emit_overrides: '${format}'";;
+        esac
+        echo
+
+        if test -z "${suppress_content}"
+        then do_emit_overrides
+        fi
 
         if test -n "${emit_acme}"
         then
@@ -1098,27 +1142,13 @@ EOF
   };
 EOF
         fi
-
         cat <<EOF
 }
 EOF
         echo " done." >&2
 }
-
-ls_acme_deps() {
-        _ls
-        ls_essential_reverse_deps
-        ls_extra_validation_attributes
-}
-
-ls_essential_reverse_deps() {
-        for attr in $(_ls)
-        do get def/meta erdeps ${attr} | xargs echo
-        done | sed $'s/ /\\\n/'g | sort | uniq
-}
-
-ls_extra_validation_attributes() {
-        get_def def/meta extra-validation-attributes
+emit_ghc_configuration_fixed_content() {
+        get_def def/meta ghc-configuration-fixed-content
 }
     #+END_SRC
 * Building & failure classification
@@ -1970,8 +2000,19 @@ loop_hunter() {
 *** overrides
 #+BEGIN_SRC sh
 overrides() {
-        emit_overrides "$@" > ${NIX_GHC_OVERRIDES}
+        emit_overrides --format overrides "$@"                       > ${NIX_GHC_OVERRIDES}
+        for x in "$@"
+        do if test "$x" = "--disable-ghc-configuration"
+           then emit_overrides --format configuration-ghc --suppress-content --reuse-cache > ${NIXPKGS}/pkgs/development/haskell-modules/${GHC_CONFIG}
+           fi; done
         cp -f ${NIX_GHC_OVERRIDES} ${PKGDB}/overrides.nix
+}
+#+END_SRC
+*** ghc-configuration
+#+BEGIN_SRC sh
+ghc_configuration() {
+        emit_overrides --format configuration-ghc                    > ${NIXPKGS}/pkgs/development/haskell-modules/${GHC_CONFIG}
+        emit_overrides --format overrides --suppress-content --reuse-cache > ${NIX_GHC_OVERRIDES}
 }
 #+END_SRC
 *** trim
@@ -2394,19 +2435,21 @@ extra-validation-attributes )
 *** Generation of overrides
   #+begin_src sh :var title=(org-tangle-item)
 section-generate )
-section "${title}" over overrides overrides-descs cache show-cache;;
+section "${title}" over overrides ghc-configuration cache show-cache;;
 
 over | override | show-override )
                    HELP "over | override | show-override ATTR" \
                            "Print the attribute's override defined by PKGDB" || return 0
                    emit_override "$1";;
 
-overrides )        HELP "overrides [--reuse-cache]" \
-                           "Generate ${NIX_GHC_OVERRIDES}" || return 0
+overrides )        HELP "overrides [--reuse-cache] [--disable-ghc-configuration]" \
+                           "Generate ${NIX_GHC_OVERRIDES}.  --disable-ghc-configuration neuters ${GHC_CONFIG}" || return 0
                    overrides                   "$@";;
 
-overrides-descs )  HELP "overrides-descs"      "As overrides, but mandate that every override comes with a proof" || return 0
-                   overrides --require-descs;;
+ghc-configuration )
+                   HELP "ghc-configuration [--reuse-cache]" \
+                           "Generate ${GHC_CONFIG}.  Neuters ${NIX_GHC_OVERRIDES}" || return 0
+                   ghc_configuration           "$@";;
 
 cache )            HELP "cache [--require-descs]" \
                            "Regenerate override cache" || return 0
