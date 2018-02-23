@@ -10,6 +10,7 @@ set -e
 DEFAULT_GHC=841  ## The value is actually configured, so this is for the absolute defaults.
 DEFAULT_GHC_CONFIG=configuration-ghc-8.4.x.nix
 ACME_ATTRIBUTE=nh-acme-grand-total-attribute
+TARGET_NIXPKGS=
 
 #+end_src
 * Basis
@@ -918,11 +919,15 @@ coherently() {
 
 	# Record the overall expression used.
         if test ${over} = "baseline"
-        then if test -z "${reuse_overrides}"
-             then emit_overrides ${reuse_cache} | tee ${PKGDB}/${EXPRTY}/baseline        > ${NIX_GHC_OVERRIDES}
-             else cp -f ${NIX_GHC_OVERRIDES}          ${PKGDB}/${EXPRTY}/baseline
-             fi
-        else      emit_overrides ${reuse_cache} | tee ${PKGDB}/${EXPRTY}/${attr}.${over} > ${NIX_GHC_OVERRIDES}
+        then savename=baseline
+        else savename=${attr}.${over}
+        fi
+        if test -z "${reuse_overrides}"
+        then apply ${reuse_cache}
+        fi
+        cp      -f ${NIX_GHC_OVERRIDES}    ${PKGDB}/${EXPRTY}/${savename}
+        if test -n "${TARGET_NIXPKGS}"
+        then cp -f ${GHC_CONFIG_FULL_PATH} ${PKGDB}/${EXPRTY}/${savename}.ghc
         fi
 
         "$@"
@@ -1128,7 +1133,6 @@ emit_overrides() {
         do case "$1"
            in --emit-acme )            emit_acme="--emit-acme";;
               --format )               format=$2; shift;;
-              --nixpkgs )              true;;                             ## Expected to be handled by caller
               --reuse-cache )          reuse_cache="--reuse-cache";;
               --require-descs )        require_descs="--require-descs";;
               --silent )               silent="--silent";;
@@ -2062,17 +2066,12 @@ loop_hunter() {
 *** apply
 #+BEGIN_SRC sh
 apply() {
-        local nixpkgs=
-        for x in "$@"
-        do if test "$x" = "--nixpkgs"
-           then nixpkgs="--nixpkgs"
-           fi; done
-
-        emit_overrides      --format overrides         ${nixpkgs:+--target local}   "$@"          > ${NIX_GHC_OVERRIDES}
-        if test -n "${nixpkgs}"
-        then emit_overrides --format configuration-ghc ${nixpkgs:+--target nixpkgs} --reuse-cache > ${GHC_CONFIG_FULL_PATH}
+        emit_overrides      --format overrides         ${TARGET_NIXPKGS:+--target local}   "$@"          > ${NIX_GHC_OVERRIDES}
+        cp      -f ${NIX_GHC_OVERRIDES}    ${PKGDB}
+        if test -n "${TARGET_NIXPKGS}"
+        then emit_overrides --format configuration-ghc ${TARGET_NIXPKGS:+--target nixpkgs} --reuse-cache > ${GHC_CONFIG_FULL_PATH}
+             cp -f ${GHC_CONFIG_FULL_PATH} ${PKGDB}
         fi
-        cp -f ${NIX_GHC_OVERRIDES} ${PKGDB}/overrides.nix
 }
 #+END_SRC
 *** trim
@@ -2144,7 +2143,11 @@ EOF
 
 print_help() {
 cat <<EOF
-Usage:  nh [--cls] [--trace] [--debug] SUBCMD [SUBARGS..]
+Usage:  nh [--cls] [--nixpkgs] [--trace] [--debug] SUBCMD [SUBARGS..]
+
+NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
+       for ${GHC_CONFIG_FULL_PATH}
+
 EOF
         for x in "$@"
         do command_dispatch section-$x
@@ -2157,6 +2160,7 @@ EOF
 while test $# -ge 1
 do case "$1"
    in --cls )              echo -en "\ec";;
+      --nixpkgs )          TARGET_NIXPKGS="--nixpkgs";;
       --trace )            set -x;;
       --help | -h )        $0 help;;
       --debug )            enable_debug
@@ -2510,8 +2514,8 @@ over | override | show-override )
                    emit_override "$1";;
 
 apply | overrides )
-                   HELP "apply [--reuse-cache] [--nixpkgs]" \
-                           "Apply all overrides via ${NIX_GHC_OVERRIDES}.  If --nixpkgs is passed, non-local overrides instead serve as definition for ${GHC_CONFIG_FULL_PATH}" || return 0
+                   HELP "apply [--reuse-cache]" \
+                           "Apply all overrides via ${NIX_GHC_OVERRIDES}" || return 0
                    apply "$@";;
 
 cache )            HELP "cache [--require-descs]" \
