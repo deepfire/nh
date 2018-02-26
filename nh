@@ -549,6 +549,10 @@ set_repoName() {
         local repo="$1"; shift
         _set def/meta repoName ${attr} "${repo}"
 }
+edit_repoName() {
+        local attr="$1"; shift
+        edit def/meta repoName ${attr}
+}
 shadow_name() {
         local attr="$1";        shift
         has def/hackage release ${attr} &&
@@ -574,14 +578,18 @@ repo_upstream() {
         local repo="$1"; shift
         get def/github upstream ${repo}
 }
-upstream() {
-        local attr="$1"; shift
-        get  def/github upstream $(repoName "$attr")
+repo_has_upstream() {
+        local repo="$1"; shift
+        has def/github upstream ${repo}
 }
 set_upstream() {
         local attr="$1"; shift
         local upstream="$1"; shift
         _set def/github upstream $(repoName "$attr") "$upstream"
+}
+edit_upstream() {
+        local attr="$1"; shift
+        edit def/github upstream $(repoName "$attr")
 }
 fix_commit() {
         local attr="$1"; shift
@@ -599,6 +607,11 @@ test_suggested_by_trim() {
         local over=$1; shift
         local attr=$1; shift
         has ${SUCCTY} ${over} ${attr}
+}
+test_known() {
+        local attr="$1"
+        local repo="$(repoName "${attr}")"
+        has def/github upstream "${repo}"
 }
 
 shadows() {
@@ -625,9 +638,17 @@ test_shadowed() {
         test_shadow_exists "${attr}" && ! has def/meta suppress-shadow "${attr}" ## XXX: re-use the 'disable' mechanism
 }
 
+upstream() {
+        local attr="$1"
+        local repo="$(repoName "${attr}")"
+        if ! has def/github upstream "${repo}"
+        then import_hackage_cabal "${attr}" >&2
+        fi
+        get def/github upstream ${repo}
+}
 test_upstreamed() {
+        local upstream="$(upstream $1)"
         local     repo="$(repoName $1)"
-        local upstream="$(repo_upstream $repo)"
         local     user="$(repo_fixer    $repo)"
 
         test -n "${user}" -a "${user}" = "${upstream}"
@@ -670,6 +691,11 @@ issueOrFail() {
                 fail " logs:  get def/github issue ${repo}"
         }
 }
+upstreamOrFail() {
+        local attr="$1"
+        upstream "$attr" ||
+                fail "unable to deduce upstream for '${attr}'"
+}
 url() {
         local KIND="$1"; shift
         local attr="$1"; shift
@@ -692,21 +718,21 @@ url() {
 
         local repo="$(repoName "$attr")"
         case "${KIND}" in
-                upstream-github-cabal )      echo -n "https://raw.githubusercontent.com/$(repo_upstream $repo)/$repo/${gitrev}/$subpath$attr.cabal";;
-                user-github-cabal )          echo -n "https://raw.githubusercontent.com/$(repo_fixer    $repo)/$repo/${gitrev}/$subpath$attr.cabal";;
-                upstream-github )            echo -n "https://github.com/$(               repo_upstream $repo)/$repo";;
-                user-github )                echo -n "https://github.com/$(               repo_fixer    $repo)/$repo";;
+                upstream-github-cabal )      echo -n "https://raw.githubusercontent.com/$(upstreamOrFail   $attr)/$repo/${gitrev}/$subpath$attr.cabal";;
+                user-github-cabal )          echo -n "https://raw.githubusercontent.com/$(repo_fixer $repo)/$repo/${gitrev}/$subpath$attr.cabal";;
+                upstream-github )            echo -n "https://github.com/$(               upstreamOrFail $attr)/$repo";;
+                user-github )                echo -n "https://github.com/$(               repo_fixer $repo)/$repo";;
                 self-github )                echo -n                    "git@github.com:$(echo   $GITHUB_USER)/$repo";;
-                upstream-pull-request )      echo -n "https://github.com/$(               repo_upstream $repo)/$repo/pull/$(prOrFail $repo)";;
-                upstream-issue )             echo -n "https://github.com/$(               repo_upstream $repo)/$repo/issues/$(issueOrFail $repo)";;
-                commits | upstream-commits ) echo -n "https://github.com/$(               repo_upstream $repo)/$repo/commits/master";;
-                user-commits )               echo -n "https://github.com/$(               repo_fixer    $repo)/$repo/commits/master";;
-                github-prs )                 echo -n "https://github.com/$(               repo_upstream $repo)/$repo/pulls";;
+                upstream-pull-request )      echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/pull/$(prOrFail $repo)";;
+                upstream-issue )             echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/issues/$(issueOrFail $repo)";;
+                commits | upstream-commits ) echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/commits/master";;
+                user-commits )               echo -n "https://github.com/$(               repo_fixer $repo)/$repo/commits/master";;
+                github-prs )                 echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/pulls";;
                 hackage )                    echo -n "https://hackage.haskell.org/package/$attr";;
                 hackage-package )            echo -n "https://hackage.haskell.org/package/$attr-$release/$attr-$release.tar.gz";;
                 hackage-cabal )              echo -n "https://hackage.haskell.org/package/$attr/$attr.cabal";;
-                pull-merged )                echo -n "https://api.github.com/repos/$(     repo_fixer    $repo)/$repo/pulls/$(prOrFail $repo)/merge";;
-                commit )                     echo -n "https://api.github.com/repos/$(     repo_fixer    $repo)/$repo/commits?sha=${gitrev}";;
+                pull-merged )                echo -n "https://api.github.com/repos/$(     repo_fixer $repo)/$repo/pulls/$(prOrFail $repo)/merge";;
+                commit )                     echo -n "https://api.github.com/repos/$(     repo_fixer $repo)/$repo/commits?sha=${gitrev}";;
                 github-requests-remaining )  echo -n "https://api.github.com/rate_limit";;
                 * ) fail "invalid URL kind: '$KIND'";;
         esac
@@ -852,7 +878,7 @@ hackage_cabal_chdir() {
 }
 hackage_cabal_upstream_url() {
         local attr="$1"; shift
-        ret=$(hackage_cabal ${attr} | sed -n '/^[Ss]ource-repository head/,$ p' | grep -i "location:" |
+        ret=$(hackage_cabal ${attr} | sed -n '/^[Ss]ource-[Rr]epository head/,$ p' | grep -i "location:" |
               sed 's,^.*ocation:[ ]*\(https\|git\)\(://github.com/.*\)\.git$,https\2,;s,^.*ocation:[ ]*\(https\|git\)\(://github.com/.*\)$,https\2,' |
               remove_nonprintable)
         if test ${PIPESTATUS[0]} = 0 -a -n "$ret"
@@ -967,6 +993,9 @@ github_requests_remaining() {
 
 info() {
         local attr="$1"
+        if ! test_known "${attr}"
+        then import_hackage_cabal "${attr}"
+        fi
         local repo=$(repoName ${attr})
                    cat <<EOF
 attribute '${attr}':
@@ -1451,8 +1480,8 @@ EOF
 
 apply() {
         emit_overrides      --format overrides         ${TARGET_NIXPKGS:+--target local}                 --output-hint ${NIX_GHC_OVERRIDES}    "$@" > ${NIX_GHC_OVERRIDES}
-        cp      -f ${NIX_GHC_OVERRIDES}    ${PKGDB}                                                                                           
-        if test -n "${TARGET_NIXPKGS}"                                                                                                        
+        cp      -f ${NIX_GHC_OVERRIDES}    ${PKGDB}
+        if test -n "${TARGET_NIXPKGS}"
         then emit_overrides --format configuration-ghc ${TARGET_NIXPKGS:+--target nixpkgs} --reuse-cache --output-hint ${GHC_CONFIG_FULL_PATH} "$@" > ${GHC_CONFIG_FULL_PATH}
              cp -f ${GHC_CONFIG_FULL_PATH} ${PKGDB}
         fi
@@ -1460,6 +1489,7 @@ apply() {
 
 import_hackage_cabal() {
         local attr="$1"
+        echo "importing cabal package '${attr}'.."
         url="$(hackage_cabal_upstream_url $attr || true)"
         if test -z "${url}"
         then fail "failed to detect upstream URL for '$attr'"; fi
@@ -2389,7 +2419,7 @@ ls-config )        HELP "ls-config"              "                             .
                    filter test_is config     status;;
 
 section-nix )
-section "Nix-level inferences" drv src dependencies referrers;;
+section "Nix-level inferences" drv src drv-src dependencies referrers;;
 
 drv )              HELP "drv ATTR"                          "Store derivation for a single override" || return 0
                    attr="$1"
@@ -2398,6 +2428,10 @@ drv )              HELP "drv ATTR"                          "Store derivation fo
 src )              HELP "src ATTR"                          "Store source derivation for a single override" || return 0
                    attr="$1"
                    do_instantiate ${attr} | xargs nix-store --query --binding src;;
+
+drv-src )          HELP "drv-src STORE-DRV"                 "Path to a Nix-stored .drv file" || return 0
+                   drv="$1"
+                   nix-store --query --binding src ${drv};;
 
 deps | dependencies | refs | references )
                    HELP "deps | refs | references ATTR"     "Store dependencies of an override" || return 0
@@ -2422,7 +2456,7 @@ cabal | cabal-release )
                    hackage_cabal "$1";;
 
 section-github )
-section "Github-based overrides" github set-upstream set-pr set-issue set-repoName;;
+section "Github-based overrides" github set-upstream edit-upstream set-pr set-issue set-repoName edit-repoName;;
 
 github | github-up )
                    HELP "github ATTR"                            "Override ATTR to its latest upstream Github commit" || return 0
@@ -2433,6 +2467,11 @@ github | github-up )
 set-upstream )     HELP "set-upstream ATTR GITHUB-USER"          "Specify an attribute's Github upstream username" || return 0
                    attr="$1"; upstream="$2"
                    set_upstream "${attr}" "${upstream}"
+                   apply "$attr";;
+
+edit-upstream )    HELP "edit-upstream ATTR"                     "Edit an attribute's Github upstream username" || return 0
+                   attr="$1"
+                   edit_upstream "${attr}"
                    apply "$attr";;
 
 set-pr )           HELP "set-pr ATTR PR#"                        "Set the PR# of an attribute's Github override" || return 0
@@ -2449,7 +2488,13 @@ set-issue )        HELP "set-issue ATTR ISSUE#"                  "Set the Issue#
                    apply "$attr";;
 
 set-repoName )     HELP "set-repoName ATTR REPO"                 "Set an attribute's Github repository name" || return 0
-                   attr="$1"; repo="$2";     _set def/meta repoName "$attr" "$repo"
+                   attr="$1"; repo="$2"
+                   set_repoName "$attr" "$repo"
+                   apply "$attr";;
+
+edit-repoName )    HELP "edit-repoName ATTR"                     "Edit an attribute's Github repository name" || return 0
+                   attr="$1"
+                   edit_repoName "$attr"
                    apply "$attr";;
 
 section-overhigh )
