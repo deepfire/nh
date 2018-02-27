@@ -243,6 +243,7 @@ NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
 
    remove ATTR[.OVER]        Remove specified overrides
    ls-over ATTR              List attribute's overrides
+   ls-input-overs ATTR       List attribute's input overrides
    get ATTR OVER             Get an attribute's override value
    set ATTR OVER VAL         Set an attribute's override value;  "" removes the override
    edit ATTR OVER            Edit the current attribute's value using readline
@@ -268,6 +269,7 @@ NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
 
    drv ATTR                  Store derivation for a single override
    src ATTR                  Store source derivation for a single override
+   drv-src STORE-DRV         Path to a Nix-stored .drv file
    deps | refs | references ATTR
                              Store dependencies of an override
    rdeps | referrers ATTR    Store reverse dependencies of an override
@@ -282,9 +284,11 @@ NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
    github ATTR               Override ATTR to its latest upstream Github commit
    set-upstream ATTR GITHUB-USER
                              Specify an attribute's Github upstream username
+   edit-upstream ATTR        Edit an attribute's Github upstream username
    set-pr ATTR PR#           Set the PR# of an attribute's Github override
    set-issue ATTR ISSUE#     Set the Issue# of an attribute's Github override
    set-repoName ATTR REPO    Set an attribute's Github repository name
+   edit-repoName ATTR        Edit an attribute's Github repository name
 
   Override manipulation (high-level):
 
@@ -300,10 +304,10 @@ NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
    log ATTR [OVER=baseline]  Obtain trim build logs for a single override
    failure ATTR [OVER=baseline]
                              Obtain trim failure kind of an override
-   failure-type ATTR [OVER=baseline]
-                             Obtain trim failure type of an override
    failure-log ATTR [OVER=baseline]
                              Obtain trim failure log of an override
+   failure-type ATTR [OVER=baseline]
+                             Obtain trim failure type of an override
    proof ATTR [OVER]         Print an override's proof of necessity. When OVER is empty, print context.
 
   Override database maintenance:
@@ -315,7 +319,7 @@ NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
                              Build overridden attrs (or specified subset)
    trim [--reuse-cache] [ATTR..]
                              Suggest a reduction to the override set (or specified subset)
-   trim-single ATTR OVER     Attempt trimming a specific override of a given attribute
+   trim-override ATTR OVER   Attempt trimming a specific override of a given attribute
    show-trims                Show the trim suggestion
    execute-trims             Execute the suggestion
    audit [--autofix] [--autoonly] [--skip-baseline] [--reuse-{overrides,cache}] [ATTR..]
@@ -327,17 +331,15 @@ NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
 
    over | override | show-override ATTR
                              Print the attribute's override defined by PKGDB
-   apply [--reuse-cache]     Apply all overrides via overrides.nix
+   apply [--reuse-cache]     Apply all overrides via /home/deepfire/overrides.nix
    cache [--require-descs]   Regenerate override cache
    show-cache ATTR           Print the cached text of attribute's override (DEBUG)
 
   Miscellanea:
 
    eval BASH-EXPR            Passthrough, to execute anything defined.
-   shell                     Nix shell with up-to-date overrides (shell.nix required)
-   shell-failures            Entering nix-shell, filtering the build log for failures
    loop-hunter               Detect attribute loops:  nix-shell 2>&1 | nh loop-hunter
-   progress                  Observe build progress
+   progress                  Live summary of new, complete and failing builds
    watch                     Observe the current build, as it hits the logs..
    ghc-update GITREV         Prefetch a GHC revision
 

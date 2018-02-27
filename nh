@@ -2631,7 +2631,7 @@ upstream )	   HELP "upstream ATTR [REV=HEAD]"               "Override to an upst
                    apply "$attr";;
 
 section-build )
-section "Build & results" build log fail failure-type failure-log proof;;
+section "Build & results" build log fail failure-log failure-type proof;;
 
 build )            HELP "build [COMMON-OPTS] ATTR"          "Build a single attribute with current overrides" || return 0
                    build --print-drv "$@";;
@@ -2659,7 +2659,7 @@ proof )            HELP "proof ATTR [OVER]" "Print an override's proof of necess
                    emit_explanation "${over}" "${attr}";;
 
 section-maintain )
-section "Override database maintenance" instantiate acme baseline trim trim-single show-trims execute-trims audit extra-validation-attributes;;
+section "Override database maintenance" instantiate acme baseline trim trim-override show-trims execute-trims audit extra-validation-attributes;;
 
 instantiate )      HELP "instantiate [--reuse-cache] [ATTR..]" "Instantiate overridden attrs (or specified subset)" || return 0
                    instantiate "$@";;
@@ -2733,15 +2733,15 @@ try | try-fix )
                    try_fix "$@";;
 
 section-miscellanea )
-section "Miscellanea" eval shell shell-failures loop-hunter progress watch ghc-update;;
+section "Miscellanea" eval loop-hunter progress watch ghc-update;;
 
-eval | x )         HELP "eval BASH-EXPR"     "Passthrough, to execute anything defined." || return 0
+eval | x )         HELP "eval BASH-EXPR"       "Passthrough, to execute anything defined." || return 0
                    "$@";;
 
 loop-hunter )      HELP "loop-hunter"          "Detect attribute loops:  nix-shell 2>&1 | nh loop-hunter" || return 0
                    loop_hunter;;
 
-progress )         HELP "progress"             "Observe build progress" || return 0
+progress )         HELP "progress"             "Live summary of new, complete and failing builds" || return 0
                    if   test -f "$(cat ${PKGDB}/current.build    2>/dev/null)"
                    then      log=$(cat ${PKGDB}/current.build    2>/dev/null)
                    else fail "Nothing to watch, exiting."
