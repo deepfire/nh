@@ -132,6 +132,18 @@ prefix_lines() {
         prefix="$1"
 	sed "s/^/${prefix}/; s/[ ]*\$//"
 }
+take_until_first_dot() {
+        sed 's/^\([^\.]*\)\..*$/\1/'
+}
+keep_after_first_dot() {
+        sed 's/^[^\.]*\.\(.*\)$/\1/'
+}
+keep_after_second_dot() {
+        sed 's/^[^\.]*\.[^\.]*\.\(.*\)$/\1/'
+}
+keep_until_last_dot() {
+        sed 's/^\(.*\)\.[^\.]*$/\1/'
+}
     #+END_SRC
 *** Version comparison
 #+BEGIN_SRC sh
@@ -363,8 +375,9 @@ _ls() {
         pushd ${PKGDB}/${TYPE} >/dev/null
 
         case $TYPE in
+                def/over )                                 ls -1 *            2>/dev/null | take_until_first_dot | sort | uniq;;
                 def/github | def/hackage )                 ls -1 *.${2:-hash} 2>/dev/null | sed "s/\\.${2:-hash}//";;
-                def/over | build/success | build/failure ) ls -1 *            2>/dev/null | grep -v "\\.baseline$" | sed 's/^\(.*\)\.[^\.]*$/\1/' | sort | uniq;;
+                build/success | build/failure )            ls -1 *            2>/dev/null | grep -v "\\.baseline$" | keep_until_last_dot | sort | uniq;;
                 * ) echo "FATAL: listing of '${TYPE}' is not supported" >&2; popd; return 1;;
         esac | sort
         popd >/dev/null
@@ -386,8 +399,28 @@ lsattrs() {
         local NAME="$1"; shift
 
         pushd ${PKGDB}/${TYPE} >/dev/null
-        ls -1 * 2>/dev/null | grep "^$NAME\\." | grep -v "\\.baseline$" | sed 's/^[^\.]*\.\(.*\)$/\1/'
+        ls -1 * 2>/dev/null | grep "^$NAME\\." | grep -v "\\.\(baseline$\|input\\.\)" | keep_after_first_dot
         popd >/dev/null
+}
+lsovers() {
+        local NAME="$1"; shift
+
+        pushd ${PKGDB}/def/over >/dev/null
+        ls -1 $NAME.* 2>/dev/null | grep -v "^$NAME\\.input\\." | keep_after_first_dot
+        popd >/dev/null
+}
+lsiovers() {
+        local NAME="$1"; shift
+
+        pushd ${PKGDB}/def/over >/dev/null
+        ls -1 $NAME.input.* 2>/dev/null | keep_after_second_dot
+        popd >/dev/null
+}
+hasiovers() {
+        ls ${PKGDB}/def/over/$1.input.* >/dev/null 2>&1
+}
+hasanyovers() {
+        ls ${PKGDB}/def/over/$1.* >/dev/null 2>&1
 }
 get() {
         local TYPE="$1"
@@ -524,7 +557,7 @@ status() {
                   else echo -n "unmerged"
                   fi;;
         maybe-config )
-                  if test -n "$(lsattrs def/over $1)"
+                  if hasanyovers "$1"
 		  then echo -n "config"
 		  else echo -n "default"
                   fi;;
@@ -637,12 +670,34 @@ ghc_configuration_fixed_content() {
 test_suggested_by_trim() {
         local over=$1; shift
         local attr=$1; shift
-        has ${SUCCTY} ${over} ${attr}
+        has ${SUCCTY} "${over}" ${attr}
 }
 test_known() {
         local attr="$1"
         local repo="$(repoName "${attr}")"
         has def/github upstream "${repo}"
+}
+get_iover() {
+        local ATTR="$1"
+        local INPUT="$2"
+
+        get def/over input.${INPUT} "${ATTR}"
+}
+set_iover() {
+        local ATTR="$1"
+        local INPUT="$2"
+        local VAL="$3"
+
+        _set def/over input.${INPUT} "${ATTR}" "$VAL"
+}
+test_override_disabled() {
+        local over="$1"; shift
+        local attr="$1"
+        has def/meta disable.${over} "${attr}"
+}
+test_overrides_disabled() {
+        local attr="$1"
+        has def/meta disable "${attr}"
 }
 #+END_SRC
 *** Shadowing
@@ -1089,6 +1144,18 @@ attribute '${attr}':
              overrides: $(lsattrs def/over ${attr} | xargs echo -n)
           upstream URL: $(if has def/github upstream $(repoName ${attr}); then url upstream-github ${attr}; fi)
 EOF
+                   input_overs="$(lsiovers ${attr})"
+                   if test -n "${input_overs}"
+                   then cat <<EOF
+       input overrides:
+EOF
+                        for iover in ${input_overs}
+                        do cat <<EOF
+  $(printf "%22s" ${iover}): $(get_iover ${attr} ${iover})
+EOF
+                        done
+                   fi
+
                    case $(status  ${attr}) in
                            hackaged | shadowed )
                    cat <<EOF
@@ -1246,7 +1313,7 @@ cache_copy() {
         pushd ${PKGDB}/cache >/dev/null
         for from in *.${FIELD_FROM}
         do
-                to="$(echo -n $from | sed 's/^\(.*\)\.[^\.]*$/\1/')".${FIELD_TO}
+                to="$(echo -n $from | keep_until_last_dot)".${FIELD_TO}
                 cp -f "${from}" "${to}"
         done
 	popd >/dev/null
@@ -1389,37 +1456,63 @@ EOF
         fi
 }
   #+END_SRC
+*** emit-input-overrides
+#+BEGIN_SRC sh
+emit_input_overrides() {
+        local attr="$1"
+        if ! hasiovers "${attr}"
+        then return 0
+        fi
+        cat <<EOF
+.override {
+EOF
+        for iover in $(lsiovers ${attr})
+        do emit_explanation input.${iover} ${attr} | prefix_lines "    ## "
+           cat <<EOF
+    ${iover} = $(get_iover ${attr} ${iover});
+EOF
+        done
+        echo -n "  }"
+}
+#+END_SRC
 *** emit-override
   #+BEGIN_SRC sh
 emit_override() {
         local attr="$1"
         local base_attr=""
 
-        if test -z "$(lsattrs def/over ${attr})" ||   has def/meta disable     "${attr}"
+        if ! hasanyovers "${attr}" || test_overrides_disabled "${attr}"
         then return
         fi
-        if test_shadowed "${attr}"               && ! has def/meta disable.src "${attr}"
+        overs="$(lsovers ${attr})"
+        if test_shadowed "${attr}" && ! test_override_disabled src "${attr}"
 	then shadowed=yes; base_attr="$(shadow_name ${attr})"
         else shadowed=;    base_attr="${attr}"
         fi
         emit_explanation ""  ${attr} | prefix_lines "  ## " # Print general context first
-        if test -n "${shadowed}" && test "$(lsattrs def/over ${attr} | xargs echo -n)" = "src"
+        if test -z "${overs}" || (test "${overs}" = "src" && test -n "${shadowed}")
         then
-                emit_explanation src ${attr} | prefix_lines "  ## "
+                if test "${overs}" = "src"
+                then emit_explanation src ${attr} | prefix_lines "  ## "
+                fi
                 cat <<EOF
-  ${attr} = super.${base_attr};
+  ${attr} = super.${base_attr}$(emit_input_overrides ${attr});
 
 EOF
         else
+                if hasiovers "${attr}"
+                then ioob="("; iocb=")"
+                else ioob="";  iocb=""
+                fi
                 cat <<EOF
-  ${attr} = overrideCabal super.${base_attr} (drv: {
+  ${attr} = ${ioob}overrideCabal super.${base_attr} (drv: {
 EOF
                 props="src doCheck doHaddock jailbreak editedCabalFile revision postPatch extraLibs"
                 for p in ${props}
                 do emit_property_override ${attr} $p
                 done
                 cat <<EOF
-  });
+  })${iocb}$(emit_input_overrides ${attr});
 
 EOF
         fi
@@ -1688,9 +1781,11 @@ promote_to_hackage() {
 *** override-builder
 #+BEGIN_SRC sh
 override_builder() {
+        print_drv=
         while test $# -ge 1
         do case "$1"
-           in "--"* )                  fail "$0: unknown option: $1";;
+           in --print-drv )            print_drv="--print-drv";;
+              "--"* )                  fail "$0: unknown option: $1";;
               * )                      break;;
            esac
            shift
@@ -1786,6 +1881,9 @@ override_builder() {
         _set ${FAILTY}    ${over} ${attr} ""
         _set ${FAILLOGTY} ${over} ${attr} ""
         _set ${FAILTYTY}  ${over} ${attr} ""
+        if test -n "${print_drv}"
+        then echo $drv
+        fi
         return 0
 }
 #+END_SRC
@@ -1871,11 +1969,13 @@ instantiate() {
 *** build
     #+BEGIN_SRC sh
 build() {
+        print_drv=
         reuse_cache=
         reuse_overrides=
         while test $# -ge 1
         do case "$1"
-           in --reuse-cache )          reuse_cache="--reuse-cache";;
+           in --print-drv )            print_drv="--print-drv";;
+              --reuse-cache )          reuse_cache="--reuse-cache";;
               --reuse-overrides )      reuse_overrides="--reuse-overrides";;
               --debug )                enable_debug;;
               "--"* )                  fail "$0: unknown option: $1";;
@@ -1886,7 +1986,7 @@ build() {
         local attr=$1; shift
         local over=${1:-baseline}
 
-        coherently ${reuse_cache} ${reuse_overrides} ${attr} "${over}" override_builder ${attr} "${over}"
+        coherently ${reuse_cache} ${reuse_overrides} ${attr} "${over}" override_builder ${print_drv} ${attr} "${over}"
 }
     #+END_SRC
 *** acme
@@ -2042,8 +2142,11 @@ trim_attribute() {
         else echo "FAILED"
         fi
 
-        for over in $(lsattrs def/over ${attr})
+        for  over in $(lsattrs def/over ${attr})
         do trim_override ${attr} ${over}
+        done
+        for iover in $(lsiovers         ${attr})
+        do trim_override ${attr} input.${iover}
         done
 }
   #+END_SRC
@@ -2520,7 +2623,7 @@ nonlocal )         HELP "nonlocal ATTR"            "Remove marking of ATTR as lo
   #+begin_src sh :var title=(org-tangle-item)
 section-overman )
 section "${title}" \
-         remove ls-over get set edit \
+         remove ls-over ls-input-overs get set edit \
          dontRevision check dontCheck haddock dontHaddock jailbreak dontJailbreak extraLibs;;
 
 remove )           HELP "remove ATTR[.OVER]"      "Remove specified overrides" || return 0
@@ -2531,6 +2634,10 @@ remove )           HELP "remove ATTR[.OVER]"      "Remove specified overrides" |
 ls-over )          HELP "ls-over ATTR"            "List attribute's overrides" || return 0
                    lsattrs def/over              "$1";;
 
+lsio | lsiovers | ls-input-overs )
+                   HELP "ls-input-overs ATTR"     "List attribute's input overrides" || return 0
+                   lsiovers def/over             "$1";;
+
 get )              HELP "get ATTR OVER"           "Get an attribute's override value" || return 0
                    get  def/over "$2"            "$1";;
 
@@ -2539,6 +2646,11 @@ set )              HELP "set ATTR OVER VAL"       "Set an attribute's override v
 
 edit )             HELP "edit ATTR OVER"          "Edit the current attribute's value using readline" || return 0
                    edit def/over                 "$2" "$1";   apply "$1";;
+
+setio | set-iover | set-input-over )
+                   HELP "set-input-over ATTR INPUT VAL" \
+                                                  "Set ATTR's override for INPUT" || return 0
+                   set_iover "$1" "$2" "$3";;
 
 dontRevision )     HELP "edit ATTR OVER"          "Edit the current attribute's value using readline" || return 0
                    _set def/over revision        "$1" "null"
@@ -2710,7 +2822,7 @@ section-build )
 section "${title}" build log fail failure-type failure-log proof;;
 
 build )            HELP "build [COMMON-OPTS] ATTR"          "Build a single attribute with current overrides" || return 0
-                   build "$@";;
+                   build --print-drv "$@";;
 
 log | logs )       HELP "log ATTR [OVER=baseline]"          "Obtain trim build logs for a single override" || return 0
                    attr="$1"; over="${2:-baseline}"
