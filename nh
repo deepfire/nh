@@ -61,6 +61,16 @@ fail() { echo "FATAL: $*" >&2; backtrace; exit 1;
        }
 fail_untraced() { echo "FATAL: $*" >&2; exit 1;
        }
+tracing_suspendable() {
+        mode="$1"
+        case "${mode}" in
+                * ) test -n "${NH_TRACING}";;
+        esac
+}
+tracing_suspend() { if tracing_suspendable "$@"; then set +x; fi
+}
+tracing_resume()  { if tracing_suspendable "$@"; then set -x; fi
+}
 
 ATEXIT_REMOVE_FILES=
 atexit_remove_files() {
@@ -131,6 +141,9 @@ keep_after_second_dot() {
 keep_until_last_dot() {
         sed 's/^\(.*\)\.[^\.]*$/\1/'
 }
+one_per_line() {
+        sed $'s/ /\\\n/'g
+}
 
 function V() # $1-a $2-op $3-$b
 # Author: stepse@StackOverflow: https://stackoverflow.com/a/48487783
@@ -163,8 +176,7 @@ function V() # $1-a $2-op $3-$b
 
 init_pkgdb() {
         set -x
-        local dir="$1"
-        local force="$2"
+        local dir="$1" force="$2"
 
         if   test -e "${dir}" -a "${force}" != "--force"
         then fail "cannot make a new override database at '${dir}': already exists"
@@ -199,8 +211,7 @@ FAILTYTY=build/failure-type
 FAILLOGTY=build/failure-log
 
 emit_nh_config() {
-        local PKGDB="$1"
-        local github_user="${2:-$USER}"
+        local PKGDB="$1" github_user="${2:-$USER}"
         cat <<EOF
 GHC=${DEFAULT_GHC}
 GHC_CONFIG=${DEFAULT_GHC_CONFIG}
@@ -338,9 +349,7 @@ nix_drv_src() {
 }
 
 path() {
-        local TYPE="$1"
-        local FIELD="$2"
-        local NAME="$3"
+        local TYPE="$1" FIELD="$2" NAME="$3"
 
         echo -n ${PKGDB}/${TYPE}/${NAME}.${FIELD}
 }
@@ -360,9 +369,7 @@ _ls() {
         popd >/dev/null
 }
 by() {
-        local TYPE="$1"
-        local FIELD="$2"
-        local VALUE="$3"
+        local TYPE="$1" FIELD="$2" VALUE="$3"
         shift 3
 
         for x in $(_ls ${TYPE})
@@ -400,9 +407,7 @@ hasanyovers() {
         ls ${PKGDB}/def/over/$1.* >/dev/null 2>&1
 }
 get() {
-        local TYPE="$1"
-        local FIELD="$2"
-        local NAME="$3"
+        local TYPE="$1" FIELD="$2" NAME="$3"
 
         if test -f ${PKGDB}/${TYPE}/${NAME}.${FIELD}
         then   cat ${PKGDB}/${TYPE}/${NAME}.${FIELD} 2>/dev/null
@@ -418,10 +423,7 @@ has() {
         test -f $(path "$@")
 }
 _set() {
-        local TYPE="$1"
-        local FIELD="$2"
-        local NAME="$3"
-        local VALUE="$4"
+        local TYPE="$1" FIELD="$2" NAME="$3" VALUE="$4"
 
         if test -z "${VALUE}"
         then rm -f ${PKGDB}/${TYPE}/${NAME}.${FIELD}
@@ -429,9 +431,7 @@ _set() {
         fi
 }
 set_stdin() {
-        local TYPE="$1"
-        local FIELD="$2"
-        local NAME="$3"
+        local TYPE="$1" FIELD="$2" NAME="$3"
 
         cat > ${PKGDB}/${TYPE}/${NAME}.${FIELD}
 }
@@ -447,6 +447,15 @@ reset_computed_state() {
         mkdir -p ${PKGDB}/{${LOGTY},${DRVTY},${EXPRTY},${SRCTY},${SUCCTY},${FAILTY},${FAILTYTY},${FAILLOGTY},cache}
         rm -f    ${PKGDB}/{${LOGTY},${DRVTY},${EXPRTY},${SRCTY},${SUCCTY},${FAILTY},${FAILTYTY},${FAILLOGTY}}/* 2>/dev/null ||
                 true
+}
+stdin_only_enabled() {
+        read attr || true
+        while test -n "${attr}"
+        do if ! test_overrides_disabled ${attr}
+           then echo ${attr}
+           fi
+           read attr || true
+        done
 }
 
 forall_edit() {
@@ -466,9 +475,7 @@ forall_defined_edit() {
         done
 }
 stdin_forall_set() {
-        local TYPE="$1"
-        local FIELD="$2"
-        local VALUE="$3"
+        local TYPE="$1" FIELD="$2" VALUE="$3"
 
         for name in $(cat)
         do _set "${TYPE}" "${FIELD}" ${name} "${VALUE}"
@@ -501,8 +508,7 @@ overset_config() {
 lstopo() {
         local TYPE="$1"
 
-        local ntotal=$(_ls ${TYPE} | wc -l)
-        local ndone=1
+        local ntotal=$(_ls ${TYPE} | wc -l) ndone=1
         for attr in $(_ls ${TYPE})
         do
                 echo -ne "\rComputing topology order: $ndone/$ntotal" >&2
@@ -540,15 +546,16 @@ status() {
 ls_essential_reverse_deps() {
         for attr in $(_ls)
         do get def/meta erdeps ${attr} | xargs echo
-        done | sed $'s/ /\\\n/'g | sort | uniq
+        done | one_per_line | sort | uniq
 }
 ls_extra_validation_attributes() {
-        get_def def/meta extra-validation-attributes
+        get_def def/meta extra-validation-attributes | one_per_line | sort | uniq
 }
 ls_acme_deps() {
-        _ls
-        ls_essential_reverse_deps
-        ls_extra_validation_attributes
+        { _ls
+           ls_essential_reverse_deps
+           ls_extra_validation_attributes
+        } | sort | uniq | grep -v "^$" | stdin_only_enabled
 }
 
 get_log() {
@@ -558,8 +565,8 @@ get_log() {
         get ${LOGTY} ${over} ${attr}
 }
 faillog() {
-        local over="$1"
-        local attr="$2"
+        local over="$1"; shift
+        local attr="$1"
 
         test "$(get ${FAILTYTY} ${over} ${attr})" != UNKNOWN || {
                 echo "WARNING: failure type UNKNOWN for:  ${attr}.${over}" >&2
@@ -647,15 +654,12 @@ test_known() {
         has def/github upstream "${repo}"
 }
 get_iover() {
-        local ATTR="$1"
-        local INPUT="$2"
+        local ATTR="$1" INPUT="$2"
 
         get def/over input.${INPUT} "${ATTR}"
 }
 set_iover() {
-        local ATTR="$1"
-        local INPUT="$2"
-        local VAL="$3"
+        local ATTR="$1" INPUT="$2" VAL="$3"
 
         _set def/over input.${INPUT} "${ATTR}" "$VAL"
 }
@@ -670,7 +674,7 @@ test_overrides_disabled() {
 }
 
 shadows() {
-        local attr="$1";        shift
+        local attr="$1"; shift
         local nixpkgs="${2:-/home/deepfire/src/nixpkgs}"
 
         local hackage_packages=${NIXPKGS}/pkgs/development/haskell-modules/hackage-packages.nix
@@ -682,13 +686,13 @@ shadows() {
         grep "${attr}_.* = callPackage" ${hackage_packages} | cut -d'"' -f2
 }
 test_shadow_exists() {
-        local attr="$1";        shift
+        local attr="$1"; shift
 
         local shadow=$(shadow_name ${attr} || true)
         test "$(get def/over src $attr)" = "hackage" -a -n "$shadow" && { shadows ${attr} | grep -q "$shadow"; }
 }
 test_shadowed() {
-        local attr="$1";        shift
+        local attr="$1"; shift
 
         test_shadow_exists "${attr}" && ! has def/meta suppress-shadow "${attr}" ## XXX: re-use the 'disable' mechanism
 }
@@ -704,14 +708,14 @@ upstream() {
 test_upstreamed() {
         local upstream="$(upstream $1)"
         local     repo="$(repoName $1)"
-        local     user="$(repo_fixer    $repo)"
+        local     user="$(repo_fixer $repo)"
 
         test -n "${user}" -a "${user}" = "${upstream}"
 }
 
 attr_override_drv_src() {
-        local over="$1";        shift
-        local attr="$1";        shift
+        local over="$1"; shift
+        local attr="$1"; shift
         nix_drv_src ${PKGDB}/${DRVTY}/${attr}.${over}
 }
 
@@ -755,9 +759,7 @@ url() {
         local KIND="$1"; shift
         local attr="$1"; shift
 
-        local subpath=
-        local gitrev=master
-        local release=
+        local subpath= gitrev=master pull_request= issue= release=
         while test $# -ge 1
         do case "$1"
            in --subpath )              subpath="$2"; shift;;
@@ -861,6 +863,7 @@ keysig=(
 "HADDOCK-INTERNAL-ERROR||||haddock: internal error:"
 "TESTSUITE-FAILURE||||^Failures:$"
 "NIX-ERROR-EVAL-ANON||||^error: while evaluating anonymous function at$"
+"HASKELL-DUPLICATE-INSTANCE||||Duplicate instance declarations:"
 )
 declare -A grepctx
 grepctx["CABAL-MISSING-DEPS"]="-A5"
@@ -879,14 +882,15 @@ grepctx["INSTANTIATE-GENERIC"]="-A7"
 grepctx["HADDOCK-INTERNAL-ERROR"]="-A7"
 grepctx["TESTSUITE-FAILURE"]="-A10"
 grepctx["NIX-ERROR-EVAL-ANON"]="-A10"
+grepctx["HASKELL-DUPLICATE-INSTANCE"]="-B1 -A3"
 
 fail_classify_one_property() {
-        local over="$1";      shift
-        local attr="$1";      shift
+        local over="$1"; shift
+        local attr="$1"; shift
         local no_state_change="$1"
 
         for ks in "${keysig[@]}"
-        do key="${ks%%||||*}"; sig="${ks#*||||}"
+        do local key="${ks%%||||*}" sig="${ks#*||||}"
            if      get_log ${over} ${attr} | egrep --max-count=1 -q                 "${sig}"
            then
                    echo "${key}"
@@ -923,9 +927,9 @@ github_cabal() {
 
 hackage_cabal_chdir() {
         local attr="$1"; shift
-        ret=$(hackage_cabal ${attr} | sed -n '/^[Ss]ource-repository head/,$ p' | grep -i "subdir:" |
-              sed 's,^.*ubdir:[ ]*\(.*\)$,\1,' |
-              remove_nonprintable)
+        local ret=$(hackage_cabal ${attr} | sed -n '/^[Ss]ource-repository head/,$ p' | grep -i "subdir:" |
+                    sed 's,^.*ubdir:[ ]*\(.*\)$,\1,' |
+                    remove_nonprintable)
         if test ${PIPESTATUS[0]} = 0 -a -n "$ret"
         then echo -n "$ret"
         else return 1
@@ -933,9 +937,9 @@ hackage_cabal_chdir() {
 }
 hackage_cabal_upstream_url() {
         local attr="$1"; shift
-        ret=$(hackage_cabal ${attr} | sed -n '/^[Ss]ource-[Rr]epository head/,$ p' | grep -i "location:" |
-              sed 's,^.*ocation:[ ]*\(https\|git\)\(://github.com/.*\)\.git$,https\2,;s,^.*ocation:[ ]*\(https\|git\)\(://github.com/.*\)$,https\2,' |
-              remove_nonprintable)
+        local ret=$(hackage_cabal ${attr} | sed -n '/^[Ss]ource-[Rr]epository head/,$ p' | grep -i "location:" |
+                    sed 's,^.*ocation:[ ]*\(https\|git\)\(://github.com/.*\)\.git$,https\2,;s,^.*ocation:[ ]*\(https\|git\)\(://github.com/.*\)$,https\2,' |
+                    remove_nonprintable)
         if test ${PIPESTATUS[0]} = 0 -a -n "$ret"
         then echo -n "$ret"
         else return 1
@@ -983,7 +987,7 @@ github_repo_url_user() {
    cut -d/ -f4 <<< $1
 }
 github_repo_url_repo() {
-   cut -d/ -f5 <<< $1
+   cut -d/ -f5 <<< $1 | sed 's/\.git$//'
 }
 
 commit_date() {
@@ -1002,18 +1006,18 @@ commit_timestamp() {
 }
 
 get_upstream_release() {
-        local attr="$1"
-        local gitrev="${2:-master}"
+        local attr="$1"; shift
+        local gitrev="${1:-master}"
         github_cabal upstream ${attr} ${gitrev} | grep -i '^version:' | sed 's/[vV]ersion:[ ]*//' | remove_nonprintable
 }
 get_user_release() {
-        local attr="$1"
-        local gitrev="${2:-master}"
+        local attr="$1"; shift
+        local gitrev="${1:-master}"
         github_cabal user ${attr} ${gitrev} | grep -i '^version:' | sed 's/[vV]ersion:[ ]*//' | remove_nonprintable
 }
 
 pull_request_status() {
-        local attr="$1"
+        local attr="$1"; shift
         local repo="$(repoName "$attr")"
         local pull_request="$(get_def def/github pr ${repo} '')"
 
@@ -1030,7 +1034,7 @@ pull_request_status() {
 
 issue_state() {
         ## XXX: untested
-        local attr="$1"
+        local attr="$1"; shift
         local repo="$(repoName "$attr")"
         local issue="$(get_def def/github issue ${repo} '')"
 
@@ -1123,7 +1127,7 @@ EOF
 overview_one() {
         local attr="$1"; shift
         local status="${1:-$(status ${attr})}"
-        upstream_release="$(get_upstream_release ${attr})"
+        local upstream_release="$(get_upstream_release ${attr})"
         cat <<EOF
               upstream: ${upstream_release}
                nixpkgs: $(get_nixpkgs_release ${attr})
@@ -1142,7 +1146,7 @@ EOF
 EOF
 ;;
         esac
-        trs="$(attrs_suggested_by_trim ${attr})"
+        local trs="$(attrs_suggested_by_trim ${attr})"
         if test -n "${trs}"
         then cat <<EOF
       trim suggestions: ${trs}
@@ -1170,7 +1174,7 @@ EOF
 }
 
 cache_gen_override_one() {
-        local attr="$1"
+        local attr="$1"; shift
         local REQUIRE_DESC="$2"
 
         emit_override ${attr} "${REQUIRE_DESC}" | set_stdin cache override ${attr}
@@ -1180,9 +1184,7 @@ cache_gen_override_one() {
 }
 
 coherently() {
-        local reuse_cache=
-        local reuse_overrides=
-        local require_desc=
+        local reuse_cache= reuse_overrides= require_desc=
         while test $# -ge 1
         do case "$1"
            in --reuse-cache )          reuse_cache="--reuse-cache";;
@@ -1205,8 +1207,8 @@ coherently() {
 
 	# Record the overall expression used.
         if test ${over} = "baseline"
-        then savename=baseline
-        else savename=${attr}.${over}
+        then local savename=baseline
+        else local savename=${attr}.${over}
         fi
         if test -z "${reuse_overrides}"
         then apply ${reuse_cache}
@@ -1232,8 +1234,7 @@ cache_copy() {
 }
 
 cache() {
-        local require_descs=
-        local silent=
+        local require_descs= silent=
         while test $# -ge 1
         do case "$1"
            in --require-descs )        require_descs="require-descs";;
@@ -1244,6 +1245,8 @@ cache() {
            shift
         done
 	mkdir -p   ${PKGDB}/cache
+
+        tracing_suspend cache
 
         local ATTRSET="$*"
         local header="\r$(iff Reg G test -z "${ATTRSET}")enerating override cache"
@@ -1261,6 +1264,8 @@ cache() {
            cache_gen_override_one ${attr} ${require_desc}
         done
         if test -z "${silent}"; then echo >&2; fi
+
+        tracing_resume cache
 }
 
 emit_explanation() {
@@ -1283,7 +1288,7 @@ emit_explanation() {
 	get def/meta ${over}.explanation ${attr} | ensure_trailing_newline
 }
 emit_src_description() {
-        local attr="$1";         shift
+        local attr="$1"; shift
 
         case "$(get def/over src ${attr})" in
                 hackage )    echo "    ## Hackage import needed";;
@@ -1296,7 +1301,7 @@ emit_src_description() {
 }
 
 emit_definition() {
-        local attr="$1"
+        local attr="$1"; shift
         cat <<EOF
   ${attr} = new.mkDerivation {
     pname = "${attr}";
@@ -1311,7 +1316,7 @@ fail_uncached() {
 }
 emit_property_override() {
         local attr="$1"; shift
-        local propName="$1"
+        local propName="$1"; shift
         eval "${propName}=\"$(get_def def/over ${propName} ${attr})\""
         eval propVal=\$$propName
         if test ! -z "${propVal}" && ! has def/meta disable.${propName} ${attr}
@@ -1361,7 +1366,7 @@ EOF
 }
 
 emit_input_overrides() {
-        local attr="$1"
+        local attr="$1"; shift
         if ! hasiovers "${attr}"
         then return 0
         fi
@@ -1378,13 +1383,13 @@ EOF
 }
 
 emit_override() {
-        local attr="$1"
+        local attr="$1"; shift
         local base_attr=""
 
         if ! hasanyovers "${attr}" || test_overrides_disabled "${attr}"
         then return
         fi
-        overs="$(lsovers ${attr})"
+        local shadowed base_attr overs="$(lsovers ${attr})"
         if test_shadowed "${attr}" && ! test_override_disabled src "${attr}"
 	then shadowed=yes; base_attr="$(shadow_name ${attr})"
         else shadowed=;    base_attr="${attr}"
@@ -1431,6 +1436,8 @@ do_emit_overrides() {
            esac
            shift
         done
+        tracing_suspend emit-overrides
+
         cat <<EOF
   ## Shadowed:
 
@@ -1474,6 +1481,7 @@ EOF
         for attr in $(filter_by_and ${predicate} test_is config status)
         do get cache override ${attr} || fail_uncached ${attr}; echo -n . >&2
         done
+        tracing_resume emit-overrides
 }
 
 emit_overrides() {
@@ -1579,15 +1587,15 @@ apply() {
 }
 
 import_hackage_cabal() {
-        local attr="$1"
+        local attr="$1"; shift
         echo "importing cabal package '${attr}'.."
-        url="$(hackage_cabal_upstream_url $attr || true)"
+        local url="$(hackage_cabal_upstream_url $attr || true)"
         if test -z "${url}"
         then fail "failed to detect upstream URL for '$attr'"; fi
-        chdir="$(hackage_cabal_chdir $attr || true)"
+        local chdir="$(hackage_cabal_chdir $attr || true)"
 
-        user="$(github_repo_url_user ${url})"
-        repo="$(github_repo_url_repo ${url})"
+        local user="$(github_repo_url_user ${url})"
+        local repo="$(github_repo_url_repo ${url})"
 
         if test "${repo}" != "$(repoName "$attr")"
         then set_repoName "${attr}" "${repo}"
@@ -1600,12 +1608,12 @@ import_hackage_cabal() {
 }
 
 github() {
-        local attr="$1"
-        local user="${2:-$(upstream ${attr})}"
+        local attr="$1"; shift
+        local user="${1:-$(upstream ${attr})}"
 
         local repo=$(repoName ${attr})
 
-        local REV="${3:-$(git ls-remote https://github.com/${user}/${repo} HEAD | cut -f1)}"
+        local REV="${2:-$(git ls-remote https://github.com/${user}/${repo} HEAD | cut -f1)}"
         __EMPTY_REPO_HASH=0sjjj9z1dhilhpc8pq4154czrb79z9cm044jvn75kxcjv6v5l2m5
 
         local HASH=$(nix-prefetch-git https://github.com/${user}/${repo} --rev ${REV} --quiet | grep sha256 | cut -d'"' -f4 | tr -d '\n')
@@ -1629,8 +1637,8 @@ EOF
 
 __EMPTY_HASH=0sjjj9z1dhilhpc8pq4154czrb79z9cm044jvn75kxcjv6v5l2m5
 hackage() {
-        local PACKAGE="$1"
-        local RELEASE="$2"
+        local PACKAGE="$1"; shift
+        local RELEASE="$1"
         local HASH="$(nix-prefetch-url http://hackage.haskell.org/package/${PACKAGE}-${RELEASE}.tar.gz | tr -d '\n')"
 
         if test "${HASH}" = "${__EMPTY_HASH}" -o -z "${HASH}"
@@ -1649,9 +1657,9 @@ EOF
 }
 
 promote_to_hackage() {
-        local attr="$1"
-        local release="$2"
-        local upstream_master_release="$3"
+        local attr="$1"; shift
+        local release="$1"
+        local upstream_master_release="$2"
 
         if test_hackage_release "${upstream_master_release}" ${attr}
         then hackage ${attr} "${upstream_master_release}"
@@ -1663,7 +1671,7 @@ promote_to_hackage() {
 }
 
 override_builder() {
-        print_drv=
+        local print_drv=
         while test $# -ge 1
         do case "$1"
            in --print-drv )            print_drv="--print-drv";;
@@ -1734,7 +1742,7 @@ override_builder() {
                 rm -f result
         else
                 echo "FATAL: failed to build '${attr}'$(iff "" ", without overriding '${over}'" test "${over}" = baseline)" >&2
-                echo "FATAL: logs:  nh log ${attr} ${over}" >&2
+                echo "FATAL: logs:  nh log ${attr} $(iff "" "${over}" test "${over}" = baseline)" >&2
                 _set ${FAILTY}   ${over} ${attr} "DIRECT"
                 fail_classify_one_property ${over} ${attr}
                 return 1
@@ -1812,8 +1820,7 @@ with_field_value() {
 }
 
 instantiate() {
-        local reuse_cache=
-        local debug=
+        local reuse_cache= debug=
         while test $# -ge 1
         do case "$1"
            in --reuse-cache )          reuse_cache="reuse-cache";;
@@ -1845,12 +1852,11 @@ instantiate() {
 }
 
 build() {
-        print_drv=
-        reuse_cache=
-        reuse_overrides=
+        local limit_to_self= print_drv= reuse_cache= reuse_overrides=
         while test $# -ge 1
         do case "$1"
-           in --print-drv )            print_drv="--print-drv";;
+           in --limit-to-self )        limit_to_self="--limit-to-self";;
+              --print-drv )            print_drv="--print-drv";;
               --reuse-cache )          reuse_cache="--reuse-cache";;
               --reuse-overrides )      reuse_overrides="--reuse-overrides";;
               --debug )                enable_debug;;
@@ -1859,10 +1865,15 @@ build() {
            esac
            shift
         done
-        local attr=$1; shift
-        local over=${1:-baseline}
+        local _attr="$1"; shift
+        local _over=${1:-baseline}
 
-        coherently ${reuse_cache} ${reuse_overrides} ${attr} "${over}" override_builder ${print_drv} ${attr} "${over}"
+        if test -n "${limit_to_self}"
+        then apply "${_attr}"
+             ## XXX: leaks attr
+             reuse_overrides="--reuse-overrides"
+        fi
+        coherently ${reuse_cache} ${reuse_overrides} ${_attr} "${_over}" override_builder ${print_drv} ${_attr} "${_over}"
 }
 
 acme() {
@@ -1880,8 +1891,7 @@ acme() {
         then apply ${reuse_cache} --emit-acme
         fi
 
-        attr=${ACME_ATTRIBUTE}
-        over="default"
+        local attr=${ACME_ATTRIBUTE} over="default"
         echo "-( building ACME catch-all attribute that depends on everything overridden:"
         echo "--( < ${attr}"
         echo "--( > $(ls_acme_deps | xargs echo)"
@@ -1890,7 +1900,7 @@ acme() {
         echo -n "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
         nix-shell ${NIX_GHC_PACKAGE_SET} -A ${attr} ${NIX_BUILD_OPTIONS} --no-out-link --keep-going 2>&1 \
                 | set_stdin ${LOGTY} ${over} ${attr}
-        status=${PIPESTATUS[0]}
+        local status=${PIPESTATUS[0]}
         if test ${status} != 0
         then echo "-( things gone wrong:"
              nh logs ${attr} ${over} | log_filter_progress
@@ -1933,12 +1943,11 @@ baseline() {
 
 shell() {
         apply --reuse-cache "$@"
-        attr=shell-environment
-        over="default"
+        local attr=shell-environment over="default"
         echo -n "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
         nix-shell ${NIX_BUILD_OPTIONS} --keep-going 2>&1 \
                 | set_stdin ${LOGTY} ${over} ${attr}
-        status=${PIPESTATUS[0]}
+        local status=${PIPESTATUS[0]}
         if test ${status} != 0
         then cat $(path ${LOGTY} ${over} ${attr}) >&2
              exit 1
@@ -1959,7 +1968,7 @@ cabal_shell() {
 }
 
 fixer_shell() {
-        local attr="$1"
+        local attr="$1"; shift
         local upstream_url="$(url upstream-github ${attr})"
         local repo="$(repoName ${attr})"
 
@@ -1971,11 +1980,11 @@ fixer_shell() {
 }
 
 try_fix() {
-        local attr="$1"
+        local attr="$1"; shift
 
         git push --force orig
         github "${attr}" "${GITHUB_USER}"
-        build --reuse-cache "${attr}"
+        build --limit-to-self --reuse-cache "${attr}"
 }
 
 trim_override() {
@@ -1992,7 +2001,7 @@ trim_override() {
 }
 
 trim_attribute() {
-        local attr="$1";   shift
+        local attr="$1"; shift
 
         echo -n "TRIM ${attr} -all>  "
         if   with_field_value def/meta "disable" "${attr}" "true" coherently --reuse-cache ${attr} "default" override_builder ${attr} "default"
@@ -2009,8 +2018,7 @@ trim_attribute() {
 }
 
 trim() {
-        local reuse_cache=
-        local skip_baseline=
+        local reuse_cache= skip_baseline=
         while test $# -ge 1
         do case "$1"
            in --reuse-cache )          reuse_cache="--reuse-cache";;
@@ -2038,9 +2046,10 @@ trim() {
 
         echo "-( trimming in progress"
         for attr in ${ATTRSET}
-        do
-                echo "TRIM ${attr}> "
+        do if ! test_overrides_disabled ${attr}
+           then echo "TRIM ${attr}> "
                 trim_attribute ${attr}
+           fi
         done | tee ${PKGDB}/trim.log
         apply
 }
@@ -2097,8 +2106,7 @@ warn() {
         printf "%32s: $msg\n" "$x"
 }
 audit_one() {
-        local autofix=
-        local autoonly=
+        local autofix= autoonly=
         while test $# -ge 1
         do case "$1"
            in --autofix ) autofix=yes-please;;
@@ -2109,7 +2117,7 @@ audit_one() {
            shift
         done
 
-        local attr="$1";   shift
+        local attr="$1"; shift
 
 	if has def/meta disable ${attr}
         then warn "${attr}" "disabled"
@@ -2273,10 +2281,7 @@ audit_one() {
 }
 
 audit() {
-        local skip_baseline=
-        local reuse_cache=
-        local reuse_overrides=
-        local autofix=
+        local skip_baseline= reuse_cache= reuse_overrides= autofix=
         while test $# -ge 1
         do case "$1"
            in --skip-baseline )        skip_baseline="--skip-baseline";;
@@ -2326,8 +2331,7 @@ loop_hunter() {
 }
 
 print_command_help() {
-        local width=25
-        local len=$(echo -n "$1" | wc -c)
+        local width=25 len=$(echo -n "$1" | wc -c)
         if test ${len} -gt ${width}
         then printf "   %s\n                             %s\n" "$1" "$2"
         else printf "   %-${width}s %s\n" "$1" "$2"
@@ -2366,7 +2370,9 @@ while test $# -ge 1
 do case "$1"
    in --cls )              echo -en "\ec";;
       --nixpkgs )          TARGET_NIXPKGS="--nixpkgs";;
-      --trace )            set -x;;
+      --trace )            set -x; NH_TRACING=true;;
+      --traceless | -t )   shift; "$0" --trace "$@" 2>&1 | less;;
+      --full-trace )       set -x;;
       --help | -h )        $0 help;;
       --debug )            enable_debug
                            # Unfortunately, this cannot work in general, because of the broken 'return 1' handling:
@@ -2420,21 +2426,22 @@ edit-meta )        HELP "edit-meta ATTR META"      "Edit the current attribute's
                    edit    def/meta  "$2" "$1";;
 
 disable )          HELP "disable ATTR[.OVER]"     "Disable all/single overrides for an attribute" || return 0
-                   attr="$1"; over="${2:+.$2}"
+                   local attr="$1" over="${2:+.$2}"
                    _set       def/meta disable${over} "$attr" true
                    apply "$1";;
 
 enable )           HELP "enable ATTR[.OVER]"      "Re-enable previously disabled overrides" || return 0
-                   attr="$1"; over="${2:+.$2}"
+                   local attr="$1" over="${2:+.$2}"
                    _set       def/meta disable${over} "$attr" ""
                    apply "$1";;
 
 set-explanation )  HELP "set-explanation ATTR OVER" "Provide a manual explanation for an override's existence" || return 0
-                   attr="$1"; over="$2"
+                   local attr="$1" over="$2"
 		   edit "def/meta" "${over}".explanation "${attr}";;
 
 set-erdeps )       HELP "set-erdeps ATTR 'ATTR..'" "Set attribute's essential rev-deps that must keep working" || return 0
-                   attr="$1"; shift; erdeps="$*"
+                   local attr="$1"; shift
+                   local erdeps="$*"
 		   _set def/meta erdeps "${attr}" "${erdeps}";;
 
 chdir )            HELP "chdir ATTR SUBDIR"        "Change directory before build;  \"\" removes the override" || return 0
@@ -2453,7 +2460,7 @@ section "Override manipulation (low level)" \
          dontRevision check dontCheck haddock dontHaddock jailbreak dontJailbreak extraLibs;;
 
 remove )           HELP "remove ATTR[.OVER]"      "Remove specified overrides" || return 0
-                   attr="$1"; over="${2:+.$2}"
+                   local attr="$1" over="${2:+.$2}"
                    remove "${attr}" "${over}"
                    apply "${attr}";;
 
@@ -2504,7 +2511,7 @@ dontJailbreak )    HELP "dontJailbreak ATTR"      "Disable an existing jailbreak
 
 extraLibs )        HELP "extraLibs ATTR [ATTR..]" \
                                                   "Specify extra dependencies;  \"\" removes the override" || return 0
-                   attr="$1"; shift
+                   local attr="$1"; shift
                    _set def/over extraLibs       "$attr" "$*";   apply "$attr";;
 
 section-status )
@@ -2532,25 +2539,25 @@ section-nix )
 section "Nix-level inferences" drv src drv-src dependencies referrers;;
 
 drv )              HELP "drv ATTR"                          "Store derivation for a single override" || return 0
-                   attr="$1"
+                   local attr="$1"
                    do_instantiate ${attr};;
 
 src )              HELP "src ATTR"                          "Store source derivation for a single override" || return 0
-                   attr="$1"
+                   local attr="$1"
                    do_instantiate ${attr} | xargs nix-store --query --binding src;;
 
 drv-src )          HELP "drv-src STORE-DRV"                 "Path to a Nix-stored .drv file" || return 0
-                   drv="$1"
+                   local drv="$1"
                    nix-store --query --binding src ${drv};;
 
 deps | dependencies | refs | references )
                    HELP "deps | refs | references ATTR"     "Store dependencies of an override" || return 0
-                   attr="$1"
+                   local attr="$1"
                    do_instantiate ${attr} | xargs nix-store --query --references;;
 
 rdeps | referrers )
                    HELP "rdeps | referrers ATTR"            "Store reverse dependencies of an override" || return 0
-                   attr="$1"
+                   local attr="$1"
                    do_instantiate ${attr} | xargs nix-store --query --referrers;;
 
 section-cabal )
@@ -2558,7 +2565,7 @@ section "Cabal-related" import cabal;;
 
 import | import-cabal )
                    HELP "import ATTR"                            "Scrape ATTR's Cabal file from Hackage for some properties" || return 0
-                   attr="$1"
+                   local attr="$1"
                    import_hackage_cabal "$1";;
 
 cabal | cabal-release )
@@ -2570,22 +2577,23 @@ section "Github-based overrides" github set-upstream edit-upstream set-pr set-is
 
 github | github-up )
                    HELP "github ATTR"                            "Override ATTR to its latest upstream Github commit" || return 0
-                   attr="$1"; repo=$(repoName ${attr})
+                   local attr="$1"
+                   local repo=$(repoName ${attr})
                    github "$attr" "$(get def/github user $repo)"
                    apply  "$attr";;
 
 set-upstream )     HELP "set-upstream ATTR GITHUB-USER"          "Specify an attribute's Github upstream username" || return 0
-                   attr="$1"; upstream="$2"
+                   local attr="$1" upstream="$2"
                    set_upstream "${attr}" "${upstream}"
                    apply "$attr";;
 
 edit-upstream )    HELP "edit-upstream ATTR"                     "Edit an attribute's Github upstream username" || return 0
-                   attr="$1"
+                   local attr="$1"
                    edit_upstream "${attr}"
                    apply "$attr";;
 
 set-pr )           HELP "set-pr ATTR PR#"                        "Set the PR# of an attribute's Github override" || return 0
-                   attr="$1"; pr="$2"
+                   local attr="$1" pr="$2"
                    if test_is unmerged status "$attr"
                    then _set def/github pr "$(repoName "$attr")" "$pr"
                    else fail "not unmerged: $attr"
@@ -2593,17 +2601,17 @@ set-pr )           HELP "set-pr ATTR PR#"                        "Set the PR# of
                    apply "$attr";;
 
 set-issue )        HELP "set-issue ATTR ISSUE#"                  "Set the Issue# of an attribute's Github override" || return 0
-                   attr="$1"; issue="$2"
+                   local attr="$1" issue="$2"
                    _set def/github issue "$(repoName "$attr")" "$issue"
                    apply "$attr";;
 
 set-repoName )     HELP "set-repoName ATTR REPO"                 "Set an attribute's Github repository name" || return 0
-                   attr="$1"; repo="$2"
+                   local attr="$1" repo="$2"
                    set_repoName "$attr" "$repo"
                    apply "$attr";;
 
 edit-repoName )    HELP "edit-repoName ATTR"                     "Edit an attribute's Github repository name" || return 0
-                   attr="$1"
+                   local attr="$1"
                    edit_repoName "$attr"
                    apply "$attr";;
 
@@ -2611,12 +2619,13 @@ section-overhigh )
 section "Override manipulation (high-level)" hackage unmerged upstream;;
 
 hackage )	   HELP "hackage ATTR [RELEASE=upstream-latest]" "Override to a Hackage release" || return 0
-                   attr="$1"; release="${2:-$(get_upstream_release ${attr})}"
+                   local attr="$1"
+                   local release="${2:-$(get_upstream_release ${attr})}"
                    hackage "$attr" "$release"
                    apply "$attr";;
 
 unmerged )	   HELP "unmerged ATTR USER PR# [REV=HEAD]"      "Override to a 3rd-party Github commit" || return 0
-                   attr="$1"; user="$2"; pr="$3"; rev="$4"
+                   local attr="$1" user="$2" pr="$3" rev="$4"
                    test -n "$attr" -a -n "$user" -a -n "pr" ||
                            fail "Usage: $0 unmerged ATTR GH-USER PR-ID [GITREV]"
                    github "$attr" "$user" "$rev"
@@ -2624,38 +2633,38 @@ unmerged )	   HELP "unmerged ATTR USER PR# [REV=HEAD]"      "Override to a 3rd-p
                    apply "$attr";;
 
 upstream )	   HELP "upstream ATTR [REV=HEAD]"               "Override to an upstream Github commit" || return 0
-                   attr="$1"; rev="$2"
-                   repo=$(repoName ${attr})
-                   user=$(get def/github upstream $repo)
+                   local attr="$1" rev="$2"
+                   local repo=$(repoName ${attr})
+                   local user=$(get def/github upstream $repo)
                    github "$attr" "$user" "$rev"
                    apply "$attr";;
 
 section-build )
 section "Build & results" build log fail failure-log failure-type proof;;
 
-build )            HELP "build [COMMON-OPTS] ATTR"          "Build a single attribute with current overrides" || return 0
-                   build --print-drv "$@";;
+b | build )        HELP "build [COMMON-OPTS] ATTR"          "Build a single attribute with current overrides" || return 0
+                   build --print-drv --limit-to-self "$@";;
 
 log | logs )       HELP "log ATTR [OVER=baseline]"          "Obtain trim build logs for a single override" || return 0
-                   attr="$1"; over="${2:-baseline}"
+                   local attr="$1" over="${2:-baseline}"
                    get ${LOGTY}      "${over}" ${attr};;
 
 fail | failure )   HELP "failure ATTR [OVER=baseline]"      "Obtain trim failure kind of an override" || return 0
-                   attr="$1"; over="${2:-baseline}"
+                   local attr="$1" over="${2:-baseline}"
                    get ${FAILTY}     "${over}" ${attr};;
 
 faillog | failure-log )
                    HELP "failure-log ATTR [OVER=baseline]"  "Obtain trim failure log of an override" || return 0
-                   attr="$1"; over="$2"
+                   local attr="$1" over="$2"
                    faillog           "${over}" ${attr};;
 
 failtype | failure-type )
                    HELP "failure-type ATTR [OVER=baseline]" "Obtain trim failure type of an override" || return 0
-                   attr="$1"; over="${2:-baseline}"
+                   local attr="$1" over="${2:-baseline}"
                    get ${FAILTYTY}   "${over}" ${attr};;
 
 proof )            HELP "proof ATTR [OVER]" "Print an override's proof of necessity. When OVER is empty, print context." || return 0
-                   attr="$1"; over="$2";
+                   local attr="$1" over="$2"
                    emit_explanation "${over}" "${attr}";;
 
 section-maintain )
@@ -2696,12 +2705,12 @@ extra-validation-attributes )
 section-generate )
 section "Generation of overrides" over apply cache show-cache;;
 
-over | override | show-override )
+o | over | override | show-override )
                    HELP "over | override | show-override ATTR" \
                            "Print the attribute's override defined by PKGDB" || return 0
                    emit_override "$1";;
 
-apply | overrides )
+a | overrides | apply )
                    HELP "apply [--reuse-cache]" \
                            "Apply all overrides via ${NIX_GHC_OVERRIDES}" || return 0
                    apply "$@";;
@@ -2731,6 +2740,23 @@ fish | fixer-shell )
 try | try-fix )
                    HELP "try-fix ATTR"         "Push the current commit and try the fix" || return 0
                    try_fix "$@";;
+
+mod | module | find-module )
+                   HELP "find-module NAME"     "Convenience alias for 'ghc-pkg find-module NAME'" || return 0
+                   module="$1"; shift
+                   ghc-pkg find-module ${module};;
+
+lspk | lspkg | list-packages )
+                   HELP "list-packages ..."    "Convenience alias for 'ghc-pkg list ..." || return 0
+                   ghc-pkg list "$@";;
+
+desc | describe | describe-package )
+                   HELP "describe-package ATTR" "Convenience alias for 'ghc-pkg describe ATTR" || return 0
+                   ghc-pkg describe "$@";;
+
+mods | modules | package-modules )
+                   HELP "package-modules ATTR" "List ATTR's exposed modules" || return 0
+                   ghc-pkg field "$1" "exposed-modules";;
 
 section-miscellanea )
 section "Miscellanea" eval loop-hunter progress watch ghc-update;;
