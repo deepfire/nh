@@ -21,13 +21,13 @@
 /dist/
 /cabal-dev/
 /.cabal-sandbox/
+/.stack-work/
 /tests/.nh
 /tests/overrides.nix
 /tests/pkgdb
 
-.stack-work/
 nohup.out
 
-/Holotype
-/Holostress
-/LCstress
+Attic.hs
+
+/packages.nix
