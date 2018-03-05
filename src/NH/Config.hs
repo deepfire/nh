@@ -77,7 +77,8 @@ readConfigOldStyle path = do
       setSingleField "GHC"                 x v = x & cGHCVer        .~ GHCVer v
       setSingleField "GHC_CONFIG"          x v = x & cGHCConfig     .~ v
       setSingleField "GITHUB_USER"         x v = x & cGithubUser    .~ GithubUser v
-      setSingleField smth                  x v = flip trace x $ "Ignoring config field: " <> T.unpack smth
+      -- XXX: the following is a bit too silent
+      setSingleField smth                  x v = x -- flip trace x $ "Ignoring config field: " <> T.unpack smth
   pure $ foldl (\cfg (k,v)→ setSingleField k cfg v) mempty kvs
        & cGHCOverrides .~ (pack $ Sys.takeDirectory $ unpack $ path </> "overrides.nix")
        & cGHCPackages  .~ (pack $ Sys.takeDirectory $ unpack $ path </> "packages.nix")
