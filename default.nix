@@ -18,7 +18,7 @@ mkDerivation {
   ];
   executableHaskellDepends = [
     aeson ansi-wl-pprint base base-unicode-symbols Cabal cabal2nix
-    containers data-default-class distribution-nixpkgs hnix
+    containers data-default-class distribution-nixpkgs hnix hourglass
     language-nix lens optparse-applicative pretty req temporary text
     text-format
   ];

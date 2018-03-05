@@ -226,7 +226,7 @@ maybeAttr' (Field field) (Just doc) = vcat
 instance Pretty ExtraDefn where
   pPrint ed@(ExtraDefn attrib meta@Meta{..} Github{..} fields) =
     vcat
-    [ lbrace
+    [ text "with pkgs;" <+> text "with self;" <+> text "mkDerivation" <+> lbrace
     , text " "
     , nest 2 $ vcat
       [ attr "pname"   $ string $ unpack $ fromAttr attrib
@@ -279,17 +279,11 @@ instance Pretty ExtraDefn where
       , maybeAttr "hyperlinkSource"              $ extraDefnPassField ed DFhyperlinkSource
       -- XXX: not really sure how to handle this
       -- , maybeAttr "phaseOverrides"              $ (vcat ∘ (map text . lines) <$> extraDefnPassField ed DFphaseOverrides)
-      , text "meta" <+> equals <+> lbrace
-      , vcat
-        [ nest 2 $ vcat
-          [ maybeAttr "homepage"    $ extraDefnPassField     ed DFmetaSectionHomepage
-          , maybeAttr "description" $ extraDefnPassField     ed DFmetaSectionDescription
-          , attr      "license"     $ extraDefnPassFieldMand ed DFmetaSectionLicense
-          , maybeAttr "platforms"   $ extraDefnPassField     ed DFmetaSectionPlatforms
-          , maybeAttr "maintainers" $ extraDefnPassField     ed DFmetaSectionMaintainers
-          ]
-        , rbrace <> semi
-        ]
+      , maybeAttr "homepage"    $ extraDefnPassField     ed DFmetaSectionHomepage
+      , maybeAttr "description" $ extraDefnPassField     ed DFmetaSectionDescription
+      , attr      "license"     $ extraDefnPassFieldMand ed DFmetaSectionLicense
+      , maybeAttr "platforms"   $ extraDefnPassField     ed DFmetaSectionPlatforms
+      , maybeAttr "maintainers" $ extraDefnPassField     ed DFmetaSectionMaintainers
       ]
     , rbrace
     ]
