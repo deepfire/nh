@@ -1675,6 +1675,13 @@ EOF
   };
 EOF
         fi
+        if test -n "${EMIT_EXTRA_DEFS}" -a "${target}" = "local"
+        then echo >&2
+             echo "WARNING:  emitting extra definitions using 'nha':" >&2
+             # nix-shell  -p haskell.packages.ghc841.nh --run "nha emit-extra-defn"
+             nix-shell "${NIX_GHC_PACKAGE_SET}" -A nh --run "nha emit-extra-defn"
+             # nha emit-extra-defn
+        fi
         cat <<EOF
 }
 EOF
@@ -1684,11 +1691,15 @@ EOF
 *** apply
 #+BEGIN_SRC sh
 apply() {
-        emit_overrides      --format overrides         ${TARGET_NIXPKGS:+--target local}                 --output-hint ${NIX_GHC_OVERRIDES}    "$@" > ${NIX_GHC_OVERRIDES}
-        cp      -f ${NIX_GHC_OVERRIDES}    ${PKGDB}
+        tmp_ngo=$(mktemp  ${TMPDIR:-/tmp}/nh-overrides.XXXXXXXXXXXXX)
+        tmp_gcfp=$(mktemp ${TMPDIR:-/tmp}/nh-overrides.XXXXXXXXXXXXX)
+        emit_overrides      --format overrides         ${TARGET_NIXPKGS:+--target local}                 --output-hint ${NIX_GHC_OVERRIDES}    "$@" > ${tmp_ngo}
+        mv ${tmp_ngo} ${NIX_GHC_OVERRIDES}
+        cp         -f ${NIX_GHC_OVERRIDES}    ${PKGDB}
         if test -n "${TARGET_NIXPKGS}"
-        then emit_overrides --format configuration-ghc ${TARGET_NIXPKGS:+--target nixpkgs} --reuse-cache --output-hint ${GHC_CONFIG_FULL_PATH} "$@" > ${GHC_CONFIG_FULL_PATH}
-             cp -f ${GHC_CONFIG_FULL_PATH} ${PKGDB}
+        then emit_overrides --format configuration-ghc ${TARGET_NIXPKGS:+--target nixpkgs} --reuse-cache --output-hint ${GHC_CONFIG_FULL_PATH} "$@" > ${tmp_gcfp}
+             mv ${tmp_gcfp} ${GHC_CONFIG_FULL_PATH}
+             cp          -f ${GHC_CONFIG_FULL_PATH} ${PKGDB}
         fi
 }
 #+END_SRC
