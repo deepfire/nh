@@ -1432,7 +1432,8 @@ fail_uncached() {
 }
 emit_property_override() {
         local attr="$1"; shift
-        local propName="$1"; shift
+        local propNameExtra="$1"; shift
+        local propName=${propNameExtra%Extra}
         eval "local ${propName}=\"$(get_def def/over ${propName} ${attr})\""
         eval local propVal=\$$propName
         if test ! -z "${propVal}" && ! has def/meta disable.${propName} ${attr}
@@ -1441,7 +1442,7 @@ emit_property_override() {
                 if test ! -z "${REQUIRE_DESC}" -a ${PIPESTATUS[0]} != 0
                 then fail "missing failure log for ${attr}.${propName}, and couldn't compute it either:  nh x emit_explanation ${propName} ${attr}"
                 fi
-                case "${propName}" in
+                case "${propNameExtra}" in
                         src )
                                 case "$src" in
                                         hackage )
@@ -1475,10 +1476,24 @@ EOF
                         editedCabalFile )  echo "    editedCabalFile = ${editedCabalFile};";;
                         revision )         echo "    revision        = ${revision};";;
                         postPatch )        echo "    postPatch       = \"${postPatch}\";";;
-                        extraLibs )        echo "    libraryHaskellDepends = drv.libraryHaskellDepends ++ (with self; [ ${extraLibs} ]);";;
+                        *Extra )           emit_depends_extra "${propName}" "${propVal}";;
                         * ) fail "unknown property: '${propName}'";;
                 esac
         fi
+}
+EXTRA_PROPS="$(echo {setup,library,executable,test,benchmark}{Haskell,System,Pkgconfig,Tool})"
+EXTRA_PROPS_HANDLED_EXTRAED="libraryHaskellExtra"
+EXTRA_PROPS_CASE="$(sed 's/ / | /g' <<< "${EXTRA_PROPS}")"
+validate_depends_extra_name() {
+        eval "case $1 in ${EXTRA_PROPS_CASE} ) return 0;; * ) return 1;; esac"
+}
+emit_depends_extra() {
+        local key="$1"; shift
+        local val="$1"; shift
+        if ! validate_depends_extra_name "${key}"
+        then fail "invalid extra depends key: ${key}"
+        fi
+        echo "    ${key}Depends = drv.${key}Depends ++ (with self; [ ${val} ]);";
 }
   #+END_SRC
 *** emit-input-overrides
@@ -1533,7 +1548,7 @@ EOF
                 cat <<EOF
   ${attr} = ${ioob}overrideCabal super.${base_attr} (drv: {
 EOF
-                local props="src doCheck doHaddock jailbreak editedCabalFile revision postPatch extraLibs"
+                local props="src doCheck doHaddock jailbreak editedCabalFile revision postPatch ${EXTRA_PROPS_HANDLED_EXTRAED}"
                 for p in ${props}
                 do emit_property_override ${attr} $p
                 done
@@ -2697,7 +2712,7 @@ nonlocal )         HELP "nonlocal ATTR"            "Remove marking of ATTR as lo
 section-overman )
 section "${title}" \
          remove ls-over ls-input-overs get set edit \
-         dontRevision check dontCheck haddock dontHaddock jailbreak dontJailbreak extraLibs;;
+         dontRevision check dontCheck haddock dontHaddock jailbreak dontJailbreak libraryHaskell;;
 
 remove )           HELP "remove ATTR[.OVER]"      "Remove specified overrides" || return 0
                    local attr="$1" over="${2:+.$2}"
@@ -2749,10 +2764,11 @@ jailbreak | doJailbreak )
 dontJailbreak )    HELP "dontJailbreak ATTR"      "Disable an existing jailbreak override" || return 0
                    _set def/over jailbreak       "$1";        apply "$1";;
 
-extraLibs )        HELP "extraLibs ATTR [ATTR..]" \
-                                                  "Specify extra dependencies;  \"\" removes the override" || return 0
+libraryHaskell )
+                   HELP "libraryHaskell ATTR [ATTR..]" \
+                                                  "Specify extra libraryHaskellDepends;  \"\" removes the override" || return 0
                    local attr="$1"; shift
-                   _set def/over extraLibs       "$attr" "$*";   apply "$attr";;
+                   _set def/over libraryHaskell   "$attr" "$*";   apply "$attr";;
 #+end_src
 *** Status
   #+begin_src sh :var title=(org-tangle-item)
