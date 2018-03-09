@@ -6,6 +6,7 @@ DEFAULT_GHC=841  ## The value is actually configured, so this is for the absolut
 DEFAULT_GHC_CONFIG=configuration-ghc-8.4.x.nix
 ACME_ATTRIBUTE=nh-acme-grand-total-attribute
 TARGET_NIXPKGS=
+NH_QUIET=
 
 enable_debug() {
         set -x
@@ -109,8 +110,13 @@ map2() {
         do ${ACTION} "${ARG1}" "${ARG2}" "$x"
         done
 }
-when() { local pred="$1"; shift; if test -n "${pred}"; then "$@"; fi
-       }
+unless() { local pred="$1";   shift; if test -z "${pred}";   then "$@"; fi
+         }
+when()   { local pred="$1";   shift; if test -n "${pred}";   then "$@"; fi
+         }
+say()    { local _quiet="$1"; shift; if test -z "${_quiet}"; then echo "$@"; fi
+         }
+
 iff() { local yes="$1" no="$2"; shift 2
         if "$@"
         then echo -n "$yes"
@@ -782,14 +788,14 @@ url() {
                                              repo="$(repoName "${attr}")"
                                              echo -n "https://raw.githubusercontent.com/$(upstreamOrFail   $attr)/$repo/${gitrev}/$subpath$attr.cabal";;
                 user-github-cabal )          echo -n "https://raw.githubusercontent.com/$(repo_fixer $repo)/$repo/${gitrev}/$subpath$attr.cabal";;
-                upstream-github )            echo -n "https://github.com/$(               upstreamOrFail $attr)/$repo";;
+                upstream-github )            echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo";;
+                upstream-pulls )             echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/pulls";;
                 user-github )                echo -n "https://github.com/$(               repo_fixer $repo)/$repo";;
                 self-github )                echo -n                    "git@github.com:$(echo   $GITHUB_USER)/$repo";;
                 upstream-pull-request )      echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/pull/$(prOrFail $repo)";;
                 upstream-issue )             echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/issues/$(issueOrFail $repo)";;
                 commits | upstream-commits ) echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/commits/master";;
                 user-commits )               echo -n "https://github.com/$(               repo_fixer $repo)/$repo/commits/master";;
-                github-prs )                 echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/pulls";;
                 hackage )                    echo -n "https://hackage.haskell.org/package/$attr";;
                 hackage-package )            echo -n "https://hackage.haskell.org/package/$attr-$release/$attr-$release.tar.gz";;
                 hackage-cabal )              echo -n "https://hackage.haskell.org/package/$attr/$attr.cabal";;
@@ -1137,6 +1143,7 @@ overview_one() {
               upstream: ${upstream_release}
                nixpkgs: $(get_nixpkgs_release ${attr})
                commits: $(url upstream-commits ${attr})
+         pull requests: $(url upstream-pulls ${attr})
                hackage: $(url hackage ${attr})
   last upstream release on hackage: $(iff yes no test_hackage_release ${upstream_release} ${attr})
   hackage release date: $(hackage_release_date ${attr} ${upstream_release})
@@ -1189,12 +1196,13 @@ cache_gen_override_one() {
 }
 
 coherently() {
-        local reuse_cache= reuse_overrides= require_desc=
+        local reuse_cache= reuse_overrides= require_desc= quiet=${NH_QUIET}
         while test $# -ge 1
         do case "$1"
            in --reuse-cache )          reuse_cache="--reuse-cache";;
               --reuse-overrides )      reuse_overrides="--reuse-overrides";;
               --require-desc )         require_desc="--require-desc";;
+              --quiet )                quiet="--quiet";;
               "--"* )                  fail "$0: unknown option: $1";;
               * )                      break;;
            esac
@@ -1208,7 +1216,7 @@ coherently() {
         if test ${PIPESTATUS[0]} != 0
         then fail "failed to compute override ${attr}"
         fi
-        get cache override ${attr}
+        unless "${quiet}" get cache override ${attr}
 
 	# Record the overall expression used.
         if test ${over} = "baseline"
@@ -1216,7 +1224,7 @@ coherently() {
         else local savename=${attr}.${over}
         fi
         if test -z "${reuse_overrides}"
-        then apply ${reuse_cache}
+        then apply ${reuse_cache} ${quiet}
         fi
         cp      -f ${NIX_GHC_OVERRIDES}    ${PKGDB}/${EXPRTY}/${savename}
         if test -n "${TARGET_NIXPKGS}"
@@ -1239,11 +1247,11 @@ cache_copy() {
 }
 
 cache() {
-        local require_descs= silent=
+        local require_descs= quiet=${NH_QUIET}
         while test $# -ge 1
         do case "$1"
            in --require-descs )        require_descs="require-descs";;
-              --silent )               silent="silent";;
+              --quiet )                quiet="quiet";;
               "--"* )                  fail "$0: unknown option: $1";;
               * )                      break;;
            esac
@@ -1263,12 +1271,12 @@ cache() {
         local ntotal=$(echo -n ${ATTRSET} | wc -w)
         local ndone=1
         for attr in ${ATTRSET}
-        do if test -z "${silent}"; then echo -ne "${header}: $ndone/$ntotal" >&2; fi
+        do say "${quiet}" -ne "${header}: $ndone/$ntotal" >&2
            ndone=$((ndone+1))
 
            cache_gen_override_one ${attr} ${require_desc}
         done
-        if test -z "${silent}"; then echo >&2; fi
+        say "${quiet}" >&2
 
         tracing_resume cache
 }
@@ -1430,13 +1438,14 @@ EOF
 }
 
 do_emit_overrides() {
-        local predicate="true"
+        local predicate="true" quiet=${NH_QUIET}
         while test $# -ge 1
         do case "$1"
            in --target )               case "$2" in
                                            local )   predicate=test_is_local;    shift;;
                                            nixpkgs ) predicate=test_is_nonlocal; shift;;
                                            * ) fail "unexpected --target: '$2'";; esac;;
+              --quiet)                 quiet="--quiet";;
               "--"* )                  fail "$0: unknown option: $1";;
               * )                      break;;
            esac
@@ -1449,7 +1458,7 @@ do_emit_overrides() {
 
 EOF
         for attr in $(filter_by_and ${predicate} test_is shadowed status)
-        do get cache override ${attr} || fail_uncached ${attr}; echo -n . >&2
+        do get cache override ${attr} || fail_uncached ${attr}; say "${quiet}" -n . >&2
         done
 
         cat <<EOF
@@ -1458,7 +1467,7 @@ EOF
 
 EOF
         for attr in $(filter_by_and ${predicate} test_is hackaged status)
-        do get cache override ${attr} || fail_uncached ${attr}; echo -n . >&2
+        do get cache override ${attr} || fail_uncached ${attr}; say "${quiet}" -n . >&2
         done
 
         cat <<EOF
@@ -1467,7 +1476,7 @@ EOF
 
 EOF
         for attr in $(filter_by_and ${predicate} test_is upstreamed status)
-        do get cache override ${attr} || fail_uncached ${attr}; echo -n . >&2
+        do get cache override ${attr} || fail_uncached ${attr}; say "${quiet}" -n . >&2
         done
 
         cat <<EOF
@@ -1476,7 +1485,7 @@ EOF
 
 EOF
         for attr in $(filter_by_and ${predicate} test_is unmerged status)
-        do get cache override ${attr} || fail_uncached ${attr}; echo -n . >&2
+        do get cache override ${attr} || fail_uncached ${attr}; say "${quiet}" -n . >&2
         done
 
         cat <<EOF
@@ -1485,7 +1494,7 @@ EOF
 
 EOF
         for attr in $(filter_by_and ${predicate} test_is config status)
-        do get cache override ${attr} || fail_uncached ${attr}; echo -n . >&2
+        do get cache override ${attr} || fail_uncached ${attr}; say "${quiet}" -n . >&2
         done
         tracing_resume emit-overrides
 }
@@ -1496,7 +1505,7 @@ emit_overrides() {
         local nixpkgs=
         local reuse_cache=
         local require_descs=
-        local silent=
+        local quiet=${NH_QUIET}
         local target=
         local desc=" "
         local output_hint=
@@ -1507,7 +1516,7 @@ emit_overrides() {
               --output-hint )          output_hint=$2; shift;;
               --reuse-cache )          reuse_cache="--reuse-cache";;
               --require-descs )        require_descs="--require-descs";;
-              --silent )               silent="--silent";;
+              --quiet )                quiet="--quiet";;
               --target )               case "$2" in
                                            local )   target=$2; shift; desc=" local ";;
                                            nixpkgs ) target=$2; shift; desc=" Nixpkgs GHC configuration "; emit_acme="";;
@@ -1523,11 +1532,11 @@ emit_overrides() {
         ### 1. Generate override cache
         ###
         if test -z "${reuse_cache}"
-        then cache ${require_descs} ${silent} "$@" ||
-                 fail "cache generation failed" >&2
+        then cache ${require_descs} ${quiet} "$@" ||
+                 fail "cache generation failed"
         fi
 
-        echo -n "Assembling${desc}overrides${output_hint:+ (in ${output_hint})}.." >&2
+        say "${quiet}" -n "Assembling${desc}overrides${output_hint:+ (in ${output_hint})}.." >&2
         ###
         ### 2. Emit overrides
         ###
@@ -1587,17 +1596,17 @@ EOF
         cat <<EOF
 }
 EOF
-        echo " done." >&2
+        say "${quiet}" " done." >&2
 }
 
 apply() {
         local tmp_ngo=$(mktemp  ${TMPDIR:-/tmp}/nh-overrides.XXXXXXXXXXXXX)
         local tmp_gcfp=$(mktemp ${TMPDIR:-/tmp}/nh-overrides.XXXXXXXXXXXXX)
-        emit_overrides      --format overrides         ${TARGET_NIXPKGS:+--target local}                 --output-hint ${NIX_GHC_OVERRIDES}    "$@" > ${tmp_ngo}
+        emit_overrides      --format overrides         ${TARGET_NIXPKGS:+--target local}                 --output-hint ${NIX_GHC_OVERRIDES}    ${NH_QUIET} "$@" > ${tmp_ngo}
         mv ${tmp_ngo} ${NIX_GHC_OVERRIDES}
         cp         -f ${NIX_GHC_OVERRIDES}    ${PKGDB}
         if test -n "${TARGET_NIXPKGS}"
-        then emit_overrides --format configuration-ghc ${TARGET_NIXPKGS:+--target nixpkgs} --reuse-cache --output-hint ${GHC_CONFIG_FULL_PATH} "$@" > ${tmp_gcfp}
+        then emit_overrides --format configuration-ghc ${TARGET_NIXPKGS:+--target nixpkgs} --reuse-cache --output-hint ${GHC_CONFIG_FULL_PATH} ${NH_QUIET} "$@" > ${tmp_gcfp}
              mv ${tmp_gcfp} ${GHC_CONFIG_FULL_PATH}
              cp          -f ${GHC_CONFIG_FULL_PATH} ${PKGDB}
         fi
@@ -1634,7 +1643,8 @@ github() {
         local REV="$(git ls-remote https://github.com/${user}/${repo} ${ref} | cut -f1)"
         __EMPTY_REPO_HASH=0sjjj9z1dhilhpc8pq4154czrb79z9cm044jvn75kxcjv6v5l2m5
 
-        local HASH=$(nix-prefetch-git https://github.com/${user}/${repo} --rev ${REV} --quiet | grep sha256 | cut -d'"' -f4 | tr -d '\n')
+        local QUIET_REDIR="$(iff '2>/dev/null' '' test -n "${NH_QUIET}")"
+        local HASH=$(nix-prefetch-git https://github.com/${user}/${repo} --rev ${REV} --quiet ${QUIET_REDIR} | grep sha256 | cut -d'"' -f4 | tr -d '\n')
 
         if test "${HASH}" = "${__EMPTY_REPO_HASH}"
         then fail "zero repo hash.  Bad commit id?"
@@ -1646,7 +1656,7 @@ github() {
         _set def/github timestamp $repo  $(commit_timestamp "${attr}" "${REV}")
         _set def/over   src "$attr" github
 
-        cat <<EOF
+        test -z "${NH_QUIET}" || cat <<EOF
 - $(get def/github hash ${repo})
 - https://github.com/${user}/${repo}/commit/$(get def/github rev ${repo})
 
@@ -1657,7 +1667,8 @@ __EMPTY_HASH=0sjjj9z1dhilhpc8pq4154czrb79z9cm044jvn75kxcjv6v5l2m5
 hackage() {
         local PACKAGE="$1"; shift
         local RELEASE="$1"
-        local HASH="$(nix-prefetch-url http://hackage.haskell.org/package/${PACKAGE}-${RELEASE}.tar.gz | tr -d '\n')"
+        local QUIET_REDIR="$(iff '2>/dev/null' '' test -n "${NH_QUIET}")"
+        local HASH="$(nix-prefetch-url http://hackage.haskell.org/package/${PACKAGE}-${RELEASE}.tar.gz ${QUIET_REDIR} | tr -d '\n')"
 
         if test "${HASH}" = "${__EMPTY_HASH}" -o -z "${HASH}"
         then fail "zero tarball hash.  Bad package name or version?"
@@ -1667,7 +1678,7 @@ hackage() {
         _set def/hackage release "$PACKAGE" "${RELEASE}"
         _set def/over    src     "$PACKAGE" hackage
 
-        cat <<EOF
+        test -z "${NH_QUIET}" || cat <<EOF
   - $(get def/hackage hash ${PACKAGE})
   - https://hackage.haskell.org/package/${PACKAGE}-${RELEASE}
 
@@ -1689,10 +1700,11 @@ promote_to_hackage() {
 }
 
 override_builder() {
-        local print_drv=
+        local print_drv= quiet="${NH_QUIET}"
         while test $# -ge 1
         do case "$1"
            in --print-drv )            print_drv="--print-drv";;
+              --quiet )                quiet="--quiet";;
               "--"* )                  fail "$0: unknown option: $1";;
               * )                      break;;
            esac
@@ -1750,14 +1762,20 @@ override_builder() {
         ### 3. build
         ###
         echo -n      "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
-        nix-store --realise ${store_drv} --cores 0 2>&1 \
+        nix-build ${NIX_GHC_PACKAGE_SET} -A ${attr} ${NIX_BUILD_OPTIONS} 2>&1 \
                 | set_stdin ${LOGTY} ${over} ${attr}
+        ## Sadly the following doesn't create the output link, and stdout parsing is meh.
+        # nix-store --realise ${store_drv} --cores 0 2>&1 \
+        #         | set_stdin ${LOGTY} ${over} ${attr}
         status=${PIPESTATUS[0]}
         rm -f ${PKGDB}/current.build
         if test ${status} = 0
         then
                 local drv=$(readlink result)
                 rm -f result
+                if test -n "${print_drv}"
+                then echo $drv >&2
+                fi
         else
                 echo "FATAL: failed to build '${attr}'$(iff "" ", without overriding '${over}'" test "${over}" = baseline)" >&2
                 echo "FATAL: logs:  nh log ${attr} $(iff "" "${over}" test "${over}" = baseline)" >&2
@@ -1789,9 +1807,6 @@ override_builder() {
         _set ${FAILTY}    ${over} ${attr} ""
         _set ${FAILLOGTY} ${over} ${attr} ""
         _set ${FAILTYTY}  ${over} ${attr} ""
-        if test -n "${print_drv}"
-        then echo $drv
-        fi
         return 0
 }
 
@@ -1870,7 +1885,7 @@ instantiate() {
 }
 
 build() {
-        local limit_to_self= print_drv= reuse_cache= reuse_overrides=
+        local limit_to_self= print_drv= reuse_cache= reuse_overrides= quiet=${NH_QUIET}
         while test $# -ge 1
         do case "$1"
            in --limit-to-self )        limit_to_self="--limit-to-self";;
@@ -1878,6 +1893,7 @@ build() {
               --reuse-cache )          reuse_cache="--reuse-cache";;
               --reuse-overrides )      reuse_overrides="--reuse-overrides";;
               --debug )                enable_debug;;
+              --quiet )                quiet="--quiet";;
               "--"* )                  fail "$0: unknown option: $1";;
               * )                      break;;
            esac
@@ -1891,7 +1907,7 @@ build() {
              ## XXX: leaks attr
              reuse_overrides="--reuse-overrides"
         fi
-        coherently ${reuse_cache} ${reuse_overrides} ${_attr} "${_over}" override_builder ${print_drv} ${_attr} "${_over}"
+        coherently ${reuse_cache} ${reuse_overrides} ${quiet} ${_attr} "${_over}" override_builder ${print_drv} ${_attr} "${_over}"
 }
 
 acme() {
@@ -2390,7 +2406,7 @@ EOF
 
 print_help() {
 cat <<EOF
-Usage:  nh [--cls] [--nixpkgs] [--trace] [--debug] SUBCMD [SUBARGS..]
+Usage:  nh [--cls] [--nixpkgs] [--trace] [--debug] [--quiet] SUBCMD [SUBARGS..]
 
 NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
        for ${GHC_CONFIG_FULL_PATH}
@@ -2406,6 +2422,7 @@ while test $# -ge 1
 do case "$1"
    in --cls )              echo -en "\ec";;
       --nixpkgs )          TARGET_NIXPKGS="--nixpkgs";;
+      --quiet | -q )       NH_QUIET="--quiet";;
       --trace )            set -x; NH_TRACING=true;;
       --traceless | -t )   shift; "$0" --trace "$@" 2>&1 | less;;
       --full-trace )       set -x;;
@@ -2727,7 +2744,8 @@ trim-override )    HELP "trim-override ATTR OVER" "Attempt trimming a specific o
 show-trims )       HELP "show-trims" "Show the trim suggestion" || return 0
                    show_trims "$@";;
 
-execute-trims )    HELP "execute-trims" "Execute the suggestion" || return 0
+apply-trim | apply-trims | execute-trims )
+                   HELP "execute-trims" "Execute the suggestion" || return 0
                    execute_trims "$@"
                    apply;;
 
