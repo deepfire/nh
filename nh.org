@@ -30,15 +30,16 @@ backtrace() {
    then return 0
    fi
    ## Source: http://www.runscripts.com/support/guides/scripting/bash/debugging-bash/stack-trace
-   declare frame=0
-   declare argv_offset=0
+   local frame=0
+   local argv_offset=0
+   local caller_info=
 
    echo
    echo "Backtrace:" >&2
    while caller_info=( $(caller $frame) ) ; do
        declare argv=()
-       declare argc
-       declare frame_argc
+       local argc
+       local frame_argc
 
        for ((frame_argc=${BASH_ARGC[frame]}, frame_argc--, argc=0; frame_argc >= 0; argc++, frame_argc--)) ; do
            argv[argc]=${BASH_ARGV[argv_offset+frame_argc]}
@@ -46,7 +47,7 @@ backtrace() {
                *[[:space:]]*) argv[argc]="'${argv[argc]}'" ;;
            esac
        done
-       argv_offset=$((argv_offset + ${BASH_ARGC[frame]}))
+       local argv_offset=$((argv_offset + ${BASH_ARGC[frame]}))
        printf "  ${frame}: line %4d: ${FUNCNAME[frame]} ${argv[*]}\n" "${caller_info[0]}" >&2
 :
        frame=$((frame+1))
@@ -71,7 +72,7 @@ fail() { echo "FATAL: $*" >&2; backtrace; exit 1;
 fail_untraced() { echo "FATAL: $*" >&2; exit 1;
        }
 tracing_suspendable() {
-        mode="$1"
+        local mode="$1"
         case "${mode}" in
                 * ) test -n "${NH_TRACING}";;
         esac
@@ -123,7 +124,7 @@ map2() {
 }
 when() { local pred="$1"; shift; if test -n "${pred}"; then "$@"; fi
        }
-iff() { local yes="$1"; local no="$2"; shift 2
+iff() { local yes="$1" no="$2"; shift 2
         if "$@"
         then echo -n "$yes"
         else echo -n "$no"
@@ -139,7 +140,7 @@ remove_nonprintable() {
         tr -dc [:print:]
 }
 prefix_lines() {
-        prefix="$1"
+        local prefix="$1"
 	sed "s/^/${prefix}/; s/[ ]*\$//"
 }
 take_until_first_dot() {
@@ -517,7 +518,7 @@ filter() {
         done
 }
 filter_by_and() {
-        pred="$1"; shift
+        local pred="$1"; shift
         for attr in $(_ls)
         do if ${pred} ${attr} > /dev/null \
               && "$@" ${attr} > /dev/null
@@ -655,8 +656,8 @@ repo_has_upstream() {
 }
 set_upstream() {
         local attr="$1"; shift
-        local upstream="$1"; shift
-        _set def/github upstream $(repoName "$attr") "$upstream"
+        local upstr="$1"; shift
+        _set def/github upstream $(repoName "$attr") "$upstr"
 }
 edit_upstream() {
         local attr="$1"; shift
@@ -733,19 +734,21 @@ test_shadowed() {
 *** Status & auto-import
     #+BEGIN_SRC sh
 upstream() {
-        local attr="$1"
-        local repo="$(repoName "${attr}")"
-        if ! has def/github upstream "${repo}"
-        then import_hackage_cabal "${attr}" >&2
+        local _attr="$1"
+        local _repo="$(repoName "${_attr}")"
+
+        if ! has def/github upstream "${_repo}"
+        then import_hackage_cabal "${_attr}" >&2
+             _repo="$(repoName "${_attr}")"
         fi
-        get def/github upstream ${repo}
+        get def/github upstream ${_repo}
 }
 test_upstreamed() {
-        local upstream="$(upstream $1)"
-        local     repo="$(repoName $1)"
-        local     user="$(repo_fixer $repo)"
+        local upstr="$(upstream $1)"
+        local  repo="$(repoName $1)"
+        local  user="$(repo_fixer $repo)"
 
-        test -n "${user}" -a "${user}" = "${upstream}"
+        test -n "${user}" -a "${user}" = "${upstr}"
 }
     #+END_SRC
 *** Nix
@@ -793,9 +796,9 @@ issueOrFail() {
         }
 }
 upstreamOrFail() {
-        local attr="$1"
-        upstream "$attr" ||
-                fail "unable to deduce upstream for '${attr}'"
+        local _attr="$1"
+        upstream "${_attr}" ||
+             fail "unable to deduce upstream for '${_attr}'"
 }
 url() {
         local KIND="$1"; shift
@@ -815,9 +818,11 @@ url() {
            shift
         done
 
-        local repo="$(repoName "$attr")"
+        local repo="$(repoName "${attr}")"
         case "${KIND}" in
-                upstream-github-cabal )      echo -n "https://raw.githubusercontent.com/$(upstreamOrFail   $attr)/$repo/${gitrev}/$subpath$attr.cabal";;
+                upstream-github-cabal )      local upstream="$(upstream "${attr}")"
+                                             repo="$(repoName "${attr}")"
+                                             echo -n "https://raw.githubusercontent.com/$(upstreamOrFail   $attr)/$repo/${gitrev}/$subpath$attr.cabal";;
                 user-github-cabal )          echo -n "https://raw.githubusercontent.com/$(repo_fixer $repo)/$repo/${gitrev}/$subpath$attr.cabal";;
                 upstream-github )            echo -n "https://github.com/$(               upstreamOrFail $attr)/$repo";;
                 user-github )                echo -n "https://github.com/$(               repo_fixer $repo)/$repo";;
@@ -1019,14 +1024,14 @@ hackage_release_date() {
         local attr="$1"; shift
         local release="$1"; shift
 
-        ret="$(endpoint_field 'Last-modified' hackage-package ${attr} --release ${release})"
+        local ret="$(endpoint_field 'Last-modified' hackage-package ${attr} --release ${release})"
         if test -z "${ret}"
         then return 1
         else echo -n "${ret}"
         fi
 }
 hackage_release_timestamp() {
-        date=$(hackage_release_date "$@")
+        local date=$(hackage_release_date "$@")
         if test $? != 0
         then return 1
         fi
@@ -1069,7 +1074,7 @@ commit_date() {
         return ${PIPESTATUS[0]}
 }
 commit_timestamp() {
-        date="$(commit_date "$@")"
+        local date="$(commit_date "$@")"
         if test $? != 0
         then return 1
         fi
@@ -1148,7 +1153,7 @@ attribute '${attr}':
              overrides: $(lsattrs def/over ${attr} | xargs echo -n)
           upstream URL: $(if has def/github upstream $(repoName ${attr}); then url upstream-github ${attr}; fi)
 EOF
-                   input_overs="$(lsiovers ${attr})"
+                   local input_overs="$(lsiovers ${attr})"
                    if test -n "${input_overs}"
                    then cat <<EOF
        input overrides:
@@ -1167,7 +1172,7 @@ EOF
 EOF
                    ;;
                            upstreamed )
-                   rev=$(get def/github rev ${repo})
+                   local rev=$(get def/github rev ${repo})
                    cat <<EOF
               upstream: $(repo_upstream ${repo})
           override rev: ${rev}
@@ -1315,7 +1320,7 @@ cache_copy() {
         pushd ${PKGDB}/cache >/dev/null
         for from in *.${FIELD_FROM}
         do
-                to="$(echo -n $from | keep_until_last_dot)".${FIELD_TO}
+                local to="$(echo -n $from | keep_until_last_dot)".${FIELD_TO}
                 cp -f "${from}" "${to}"
         done
 	popd >/dev/null
@@ -1413,8 +1418,8 @@ fail_uncached() {
 emit_property_override() {
         local attr="$1"; shift
         local propName="$1"; shift
-        eval "${propName}=\"$(get_def def/over ${propName} ${attr})\""
-        eval propVal=\$$propName
+        eval "local ${propName}=\"$(get_def def/over ${propName} ${attr})\""
+        eval local propVal=\$$propName
         if test ! -z "${propVal}" && ! has def/meta disable.${propName} ${attr}
         then
                 emit_explanation ${propName} ${attr} | prefix_lines "    ## "
@@ -1434,7 +1439,7 @@ emit_property_override() {
 EOF
                                                 fi;;
                                         github )
-                                                repo=$(repoName ${attr})
+                                                local repo=$(repoName ${attr})
                                                 cat <<EOF
     src = pkgs.fetchFromGitHub {
       owner  = "$(repo_fixer ${repo})";
@@ -1505,6 +1510,7 @@ emit_override() {
 
 EOF
         else
+                local ioob= iocb=
                 if hasiovers "${attr}"
                 then ioob="("; iocb=")"
                 else ioob="";  iocb=""
@@ -1512,7 +1518,7 @@ EOF
                 cat <<EOF
   ${attr} = ${ioob}overrideCabal super.${base_attr} (drv: {
 EOF
-                props="src doCheck doHaddock jailbreak editedCabalFile revision postPatch extraLibs"
+                local props="src doCheck doHaddock jailbreak editedCabalFile revision postPatch extraLibs"
                 for p in ${props}
                 do emit_property_override ${attr} $p
                 done
@@ -1526,7 +1532,7 @@ EOF
 *** do-emit-overrides
   #+BEGIN_SRC sh
 do_emit_overrides() {
-        predicate="true"
+        local predicate="true"
         while test $# -ge 1
         do case "$1"
            in --target )               case "$2" in
@@ -1608,7 +1614,7 @@ emit_overrides() {
               --silent )               silent="--silent";;
               --target )               case "$2" in
                                            local )   target=$2; shift; desc=" local ";;
-                                           nixpkgs ) target=$2; shift; desc=" Nixpkgs GHC configuration ";;
+                                           nixpkgs ) target=$2; shift; desc=" Nixpkgs GHC configuration "; emit_acme="";;
                                            * ) fail "unexpected --target: '$2'";; esac;;
               --debug )                enable_debug;;
               "--"* )                  fail "$0: unknown option: $1";;
@@ -1658,7 +1664,7 @@ EOF
 
         if test -n "${emit_acme}"
         then
-                tmpdir="$(mktemp -d)"
+                local tmpdir="$(mktemp -d)"
                 cat <<EOF
 
   ## The catch-all attribute that depends on everything overridden (incl. meta/disabled things).
@@ -1691,8 +1697,8 @@ EOF
 *** apply
 #+BEGIN_SRC sh
 apply() {
-        tmp_ngo=$(mktemp  ${TMPDIR:-/tmp}/nh-overrides.XXXXXXXXXXXXX)
-        tmp_gcfp=$(mktemp ${TMPDIR:-/tmp}/nh-overrides.XXXXXXXXXXXXX)
+        local tmp_ngo=$(mktemp  ${TMPDIR:-/tmp}/nh-overrides.XXXXXXXXXXXXX)
+        local tmp_gcfp=$(mktemp ${TMPDIR:-/tmp}/nh-overrides.XXXXXXXXXXXXX)
         emit_overrides      --format overrides         ${TARGET_NIXPKGS:+--target local}                 --output-hint ${NIX_GHC_OVERRIDES}    "$@" > ${tmp_ngo}
         mv ${tmp_ngo} ${NIX_GHC_OVERRIDES}
         cp         -f ${NIX_GHC_OVERRIDES}    ${PKGDB}
@@ -1732,10 +1738,11 @@ import_hackage_cabal() {
 github() {
         local attr="$1"; shift
         local user="${1:-$(upstream ${attr})}"
+        local ref="$(iff refs/heads/$2 HEAD test -n "$2")"
 
         local repo=$(repoName ${attr})
 
-        local REV="${2:-$(git ls-remote https://github.com/${user}/${repo} HEAD | cut -f1)}"
+        local REV="$(git ls-remote https://github.com/${user}/${repo} ${ref} | cut -f1)"
         __EMPTY_REPO_HASH=0sjjj9z1dhilhpc8pq4154czrb79z9cm044jvn75kxcjv6v5l2m5
 
         local HASH=$(nix-prefetch-git https://github.com/${user}/${repo} --rev ${REV} --quiet | grep sha256 | cut -d'"' -f4 | tr -d '\n')
@@ -1837,16 +1844,16 @@ override_builder() {
 	fi
 
         ###
-        ### 2. prebuild context
+        ### 2. prebuild context (shell_for() gets you here)
         ###
         echo -n      "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
-        nix-shell ${NIX_GHC_PACKAGE_SET} -A ${attr} ${NIX_BUILD_OPTIONS} --no-out-link 2>&1 \
+        nix-shell ${NIX_GHC_PACKAGE_SET} -A ${attr}.env ${NIX_BUILD_OPTIONS} 2>&1 \
                 | set_stdin ${LOGTY} ${over} ${attr}
         local status=${PIPESTATUS[0]}
         if test ${status} != 0
         then
                 echo "FATAL: failed to prebuild deps of '${attr}'$(iff "" ", without overriding '${over}'" test "${over}" = baseline)" >&2
-                intermediate_failure=$(get ${LOGTY} "${over}" ${attr} | log_filter_failure)
+                local intermediate_failure=$(get ${LOGTY} "${over}" ${attr} | log_filter_failure)
 		if test -n "${intermediate_failure}"
 		then
                 	echo "FATAL: ..apparently due to:  ${intermediate_failure}"
@@ -1861,7 +1868,7 @@ override_builder() {
         ### 3. build
         ###
         echo -n      "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
-        nix-build ${NIX_GHC_PACKAGE_SET} -A ${attr} ${NIX_BUILD_OPTIONS} 2>&1 \
+        nix-store --realise ${store_drv} --cores 0 2>&1 \
                 | set_stdin ${LOGTY} ${over} ${attr}
         status=${PIPESTATUS[0]}
         rm -f ${PKGDB}/current.build
@@ -1917,7 +1924,7 @@ with_field_value_atexit() {
         cache_gen_override_one "${WFV_NAME}"
 }
 with_field_value() {
-        update_cache=
+        local update_cache=
         while test $# -ge 1
         do case "$1"
            in --debug )                enable_debug;;
@@ -1944,7 +1951,7 @@ with_field_value() {
         cache_gen_override_one "${WFV_NAME}"
 
         "$@"
-        result=$?
+        local result=$?
         _set "${WFV_TYPE}" "${WFV_FIELD}" "${WFV_NAME}" "${WFV_SAVE_VAL}"
         cache_gen_override_one "${WFV_NAME}"
         return $result
@@ -2020,7 +2027,7 @@ acme() {
         do case "$1"
            in --reuse-cache )          reuse_cache="--reuse-cache";;
               "--"* )                  fail "$0: unknown option: $1";;
-              * )                      break;;
+              ,* )                      break;;
            esac
            shift
         done
@@ -2041,7 +2048,8 @@ acme() {
         local status=${PIPESTATUS[0]}
         if test ${status} != 0
         then echo "-( things gone wrong:"
-             nh logs ${attr} ${over} | log_filter_progress
+             # nh logs ${attr} ${over}
+             get ${LOGTY} "${over}" ${attr} | log_filter_progress
         else echo "-( Peace.."
         fi
         return ${status}
@@ -2050,7 +2058,7 @@ acme() {
 *** baseline
 #+BEGIN_SRC sh
 baseline() {
-        local reuse_cache=
+        local reuse_cache= reuse_overrides=
         while test $# -ge 1
         do case "$1"
            in --reuse-cache )          reuse_cache="--reuse-cache";;
@@ -2086,6 +2094,7 @@ baseline() {
 shell() {
         apply --reuse-cache "$@"
         local attr=shell-environment over="default"
+
         echo -n "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
         nix-shell ${NIX_BUILD_OPTIONS} --keep-going 2>&1 \
                 | set_stdin ${LOGTY} ${over} ${attr}
@@ -2094,7 +2103,18 @@ shell() {
         then cat $(path ${LOGTY} ${over} ${attr}) >&2
              exit 1
         fi
+
         nix-shell
+}
+    #+END_SRC
+*** shell-for
+    #+begin_src sh
+shell_for() {
+        local _attr="$1"; shift
+        apply --reuse-cache "$@" ${_attr}
+        local over="default"
+
+        nix-shell ${NIX_GHC_PACKAGE_SET} -A ${_attr}.env ${NIX_BUILD_OPTIONS}
 }
     #+END_SRC
 *** cabal-shell
@@ -2135,6 +2155,15 @@ try_fix() {
         build --limit-to-self --reuse-cache "${attr}"
 }
   #+END_SRC
+*** install
+  #+BEGIN_SRC sh
+install() {
+        local attr="$1"; shift
+
+        build ${attr}
+
+}
+  #+END_SRC
 * Maintenance, Trimming & Audit
 *** trim-override
   #+BEGIN_SRC sh
@@ -2173,7 +2202,7 @@ trim_attribute() {
 *** trim
 #+BEGIN_SRC sh
 trim() {
-        local reuse_cache= skip_baseline=
+        local reuse_cache= since=
         while test $# -ge 1
         do case "$1"
            in --reuse-cache )          reuse_cache="--reuse-cache";;
@@ -2214,7 +2243,7 @@ trim() {
 show_trims() {
         for attr in $(_ls ${SUCCTY})
         do
-                trimset="$(lsattrs ${SUCCTY} ${attr} | xargs echo -n)"
+                local trimset="$(lsattrs ${SUCCTY} ${attr} | xargs echo -n)"
                 if test "${trimset}" = "default"
                 then trimset="$(lsattrs def/over ${attr} | xargs echo -n)"
                 fi
@@ -2233,7 +2262,7 @@ show_trims() {
 execute_trims() {
         for attr in $(_ls ${SUCCTY})
         do
-                trimset="$(lsattrs ${SUCCTY} ${attr} | xargs echo -n)"
+                local trimset="$(lsattrs ${SUCCTY} ${attr} | xargs echo -n)"
                 if test "${trimset}" = "default"
                 then
                         echo "--( ${attr} now entirely redundant"
@@ -2769,11 +2798,12 @@ cabal | cabal-release )
 section-github )
 section "${title}" github set-upstream edit-upstream set-pr set-issue set-repoName edit-repoName;;
 
-github | github-up )
-                   HELP "github ATTR"                            "Override ATTR to its latest upstream Github commit" || return 0
-                   local attr="$1"
+g | github )
+                   HELP "github ATTR [REF]"                      "Override ATTR to its latest upstream Github commit" || return 0
+                   local attr="$1"; shift
+                   local ref="$1"
                    local repo=$(repoName ${attr})
-                   github "$attr" "$(get def/github user $repo)"
+                   github "$attr" "$(get def/github user $repo)" ${ref}
                    apply  "$attr";;
 
 set-upstream )     HELP "set-upstream ATTR GITHUB-USER"          "Specify an attribute's Github upstream username" || return 0
@@ -2814,7 +2844,7 @@ edit-repoName )    HELP "edit-repoName ATTR"                     "Edit an attrib
 section-overhigh )
 section "${title}" hackage unmerged upstream;;
 
-hackage )	   HELP "hackage ATTR [RELEASE=upstream-latest]" "Override to a Hackage release" || return 0
+h | hackage )	   HELP "hackage ATTR [RELEASE=upstream-latest]" "Override to a Hackage release" || return 0
                    local attr="$1"
                    local release="${2:-$(get_upstream_release ${attr})}"
                    hackage "$attr" "$release"
@@ -2929,16 +2959,21 @@ show-cache )       HELP "show-cache ATTR"      "Print the cached text of attribu
 *** Nix shell
 #+begin_src sh :var title=(org-tangle-item)
 section-shell )
-section "${title}" shell cabal-shell fixer-shell try-fix;;
+section "${title}" shell shell-for cabal-shell fixer-shell try-fix;;
 
-shell )            HELP "shell"                "Nix shell with up-to-date overrides (shell.nix required)" || return 0
+s | shell )
+                   HELP "shell"                "Nix shell with up-to-date overrides (shell.nix required)" || return 0
                    shell "$@";;
 
-cabsh | cabal-shell )
+sf | shfor | shell-for )
+                   HELP "shell-for ATTR"       "Nix shell for building ATTR" || return 0
+                   shell_for "$@";;
+
+c | cabsh | cabal-shell )
                    HELP "cabal-shell"          "Nix shell from a cabal file (nothing else required)" || return 0
                    cabal_shell "$@";;
 
-fish | fixer-shell )
+f | fish | fixer-shell )
                    HELP "clone-upstream-fixer-shell" \
                                                "Nix shell from a cabal file (nothing else required)" || return 0
                    fixer_shell "$@";;
@@ -2949,10 +2984,10 @@ try | try-fix )
 
 mod | module | find-module )
                    HELP "find-module NAME"     "Convenience alias for 'ghc-pkg find-module NAME'" || return 0
-                   module="$1"; shift
+                   local module="$1"; shift
                    ghc-pkg find-module ${module};;
 
-lspk | lspkg | list-packages )
+lspk | pkg | list-packages )
                    HELP "list-packages ..."    "Convenience alias for 'ghc-pkg list ..." || return 0
                    ghc-pkg list "$@";;
 
@@ -2963,6 +2998,11 @@ desc | describe | describe-package )
 mods | modules | package-modules )
                    HELP "package-modules ATTR" "List ATTR's exposed modules" || return 0
                    ghc-pkg field "$1" "exposed-modules";;
+
+stepper )          HELP "stepper ATTR"         "Step through ATTR's build phases" || return 0
+                   # $prePhases unpackPhase patchPhase $preConfigurePhases configurePhase $preBuildPhases buildPhase checkPhase $preInstallPhases installPhase fixupPhase $preDistPhases distPhase $postPhases
+                   true;;
+
 #+end_src
 *** Miscellanea
   #+begin_src sh :var title=(org-tangle-item)
@@ -2976,28 +3016,33 @@ loop-hunter )      HELP "loop-hunter"          "Detect attribute loops:  nix-she
                    loop_hunter;;
 
 progress )         HELP "progress"             "Live summary of new, complete and failing builds" || return 0
-                   if   test -f "$(cat ${PKGDB}/current.build    2>/dev/null)"
-                   then      log=$(cat ${PKGDB}/current.build    2>/dev/null)
+                   if    test -f "$(cat ${PKGDB}/current.build    2>/dev/null)"
+                   then local log=$(cat ${PKGDB}/current.build    2>/dev/null)
                    else fail "Nothing to watch, exiting."
                    fi
                    echo "watching ${log}"
-                   nlines=$(stty size | awk '{print $1}')
+                   local nlines=$(stty size | awk '{print $1}')
                    watch --interval=1 --no-title bash -c "'cat $(cat ${PKGDB}/current.build    2>/dev/null) | nh x log_filter_progress' | tail -n$((nlines-1))";;
 
 watch )            HELP "watch"                "Observe the current build, as it hits the logs.." || return 0
-                   if   test -f "$(cat ${PKGDB}/current.build    2>/dev/null)"
-                   then      log=$(cat ${PKGDB}/current.build    2>/dev/null)
+                   if    test -f "$(cat ${PKGDB}/current.build    2>/dev/null)"
+                   then local log=$(cat ${PKGDB}/current.build    2>/dev/null)
                    else fail "Nothing to watch, exiting."
                    fi
                    echo "watching $log"
                    tail -f "$log";;
 
-ghc-update )       HELP "ghc-update GITREV"    "Prefetch a GHC revision" || return 0
-                   rev="$1"; shift
+ghc )
+                   HELP "ghc"                    "Shell with current GHC" || return 0
+                   nix-shell -p haskell.compiler.ghc${GHC};;
+
+pghc | prefetch-ghc )
+                   HELP "prefetch-ghc GITREV"    "Prefetch a GHC revision" || return 0
+                   local rev="$1"; shift
                    nix-prefetch-git git://git.haskell.org/ghc.git --fetch-submodules --rev ${rev};;
 
 www )              # HELP "www URL-KIND ATTR"     "Elinks -> an URL associated with ATTR" || return 0
-                   kind="$1"; name="$2";
+                   local kind="$1" name="$2";
                    elinks "$(url $kind $name)"
                    ;;
 
@@ -3005,6 +3050,7 @@ www )              # HELP "www URL-KIND ATTR"     "Elinks -> an URL associated w
 esac
 }
 
+echo "nh $*" >> ~/.nh_history
 command_dispatch "$@"
   #+end_src
 
