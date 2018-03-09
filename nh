@@ -1094,11 +1094,11 @@ info() {
                    cat <<EOF
 attribute '${attr}':
 
+                  $(status  ${attr} | tr a-z A-Z)
                 target: $(if test_is_local ${attr}
                           then echo 'local overrides'
                           else echo 'nixpkgs'
                           fi)
-                status: $(status  ${attr})
              overrides: $(lsattrs def/over ${attr} | xargs echo -n)
           upstream URL: $(if has def/github upstream $(repoName ${attr}); then url upstream-github ${attr}; fi)
 EOF
@@ -2023,7 +2023,7 @@ baseline() {
 }
 
 shell() {
-        apply --reuse-cache "$@"
+        apply --reuse-cache
         local attr=shell-environment over="default"
 
         echo -n "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
@@ -2035,39 +2035,43 @@ shell() {
              exit 1
         fi
 
-        nix-shell
+        nix-shell "$@"
 }
 
 shell_for() {
         local _attr="$1"; shift
-        apply --reuse-cache "$@" ${_attr}
+        apply --reuse-cache ${_attr}
         local over="default"
 
-        nix-shell ${NIX_GHC_PACKAGE_SET} -A ${_attr}.env ${NIX_BUILD_OPTIONS}
+        nix-shell ${NIX_GHC_PACKAGE_SET} -A ${_attr}.env ${NIX_BUILD_OPTIONS} "$@"
 }
 
 cabal_shell() {
         ## XXX:  ultra-messy/assumptiony
         # ATEXIT_REMOVE_FILES="default.nix shell.nix overrides.nix"
 	# trap atexit_remove_files EXIT
-        cabal2nix . "$@"    > default.nix
+        cabal2nix .         > default.nix
         if test         ! -f "shell.nix"
         then echo "Generating shell.nix.."
              emit_shell_nix > shell.nix
         fi
-        shell --reuse-cache
+        shell "$@"
 }
 
 fixer_shell() {
-        local attr="$1"; shift
-        local upstream_url="$(url upstream-github ${attr})"
-        local repo="$(repoName ${attr})"
+        local _attr="$1"; shift
+        local upstream="$(upstream ${_attr})"
+        local upstream_url="$(url upstream-github ${_attr})"
+        local repo="$(repoName ${_attr})"
+
+        github "${_attr}" "${upstream}"
 
         git clone ${upstream_url} ${repo}
         cd ${repo}
         set def/github user ${repo} ${GITHUB_USER}
-        git remote add orig $(url self-github ${attr})
-        cabal_shell
+        git remote add orig $(url self-github ${_attr})
+
+        shell_for "${_attr}" --pure
 }
 
 try_fix() {
@@ -2584,24 +2588,24 @@ setio | set-iover | set-input-over )
                                                   "Set ATTR's override for INPUT" || return 0
                    set_iover "$1" "$2" "$3";;
 
-dontRevision )     HELP "edit ATTR OVER"          "Edit the current attribute's value using readline" || return 0
+dr | dontRevision )     HELP "edit ATTR OVER"          "Edit the current attribute's value using readline" || return 0
                    _set def/over revision        "$1" "null"
                    _set def/over editedCabalFile "$1" "null"; apply "$1";;
 
 check | doCheck )  HELP "check ATTR"              "Disable an existing dontCheck override" || return 0
                    _set def/over doCheck         "$1";        apply "$1";;
 
-dontCheck )        HELP "dontCheck ATTR"          "Disable tests" || return 0
+dc | dontCheck )        HELP "dontCheck ATTR"          "Disable tests" || return 0
                    _set def/over doCheck         "$1" false;  apply "$1";;
 
 haddock | doHaddock )
                    HELP "haddock ATTR"            "Disable an existing dontHaddock override" || return 0
                    _set def/over doHaddock       "$1";        apply "$1";;
 
-dontHaddock )      HELP "dontHaddock ATTR"        "Disable Haddock generation" || return 0
+dh | dontHaddock )      HELP "dontHaddock ATTR"        "Disable Haddock generation" || return 0
                    _set def/over doHaddock       "$1" false;  apply "$1";;
 
-jailbreak | doJailbreak )
+j | jailbreak | doJailbreak )
                    HELP "jailbreak ATTR"          "Turn on jailbreaking" || return 0
                    _set def/over jailbreak       "$1" true;   apply "$1";;
 
@@ -2807,10 +2811,10 @@ faillog | failure-log )
                    local attr="$1" over="$2"
                    faillog           "${over}" ${attr};;
 
-failtype | failure-type )
+failty | failtype | failure-type )
                    HELP "failure-type ATTR [OVER=baseline]" "Obtain trim failure type of an override" || return 0
                    local attr="$1" over="${2:-baseline}"
-                   get ${FAILTYTY}   "${over}" ${attr};;
+                   get ${FAILTYTY}   "${over}" ${attr}; echo;;
 
 proof )            HELP "proof ATTR [OVER]" "Print an override's proof of necessity. When OVER is empty, print context." || return 0
                    local attr="$1" over="$2"
@@ -2873,7 +2877,7 @@ show-cache )       HELP "show-cache ATTR"      "Print the cached text of attribu
                    get cache override "$1";;
 
 section-shell )
-section "Nix shell" shell shell-for cabal-shell fixer-shell try-fix;;
+section "Nix shell" shell shell-for cabal-shell fixer-shell try-fix module pkg describe modules phases;;
 
 s | shell )
                    HELP "shell"                "Nix shell with up-to-date overrides (shell.nix required)" || return 0
@@ -2909,16 +2913,17 @@ desc | describe | describe-package )
                    HELP "describe-package ATTR" "Convenience alias for 'ghc-pkg describe ATTR" || return 0
                    ghc-pkg describe "$@";;
 
-mods | modules | package-modules )
+mods | pkgmods | modules | package-modules )
                    HELP "package-modules ATTR" "List ATTR's exposed modules" || return 0
                    ghc-pkg field "$1" "exposed-modules";;
 
-stepper )          HELP "stepper ATTR"         "Step through ATTR's build phases" || return 0
-                   # $prePhases unpackPhase patchPhase $preConfigurePhases configurePhase $preBuildPhases buildPhase checkPhase $preInstallPhases installPhase fixupPhase $preDistPhases distPhase $postPhases
-                   true;;
+phases | build-phases)
+                   HELP "phases ATTR"          "Print ATTR's build phases" || return 0
+                   echo $prePhases unpackPhase patchPhase $preConfigurePhases configurePhase $preBuildPhases buildPhase checkPhase $preInstallPhases installPhase fixupPhase $preDistPhases distPhase $postPhases
+                   ;;
 
 section-miscellanea )
-section "Miscellanea" eval loop-hunter progress watch ghc-update;;
+section "Miscellanea" eval loop-hunter progress watch ghc prefetch-ghc;;
 
 eval | x )         HELP "eval BASH-EXPR"       "Passthrough, to execute anything defined." || return 0
                    "$@";;
@@ -2926,7 +2931,7 @@ eval | x )         HELP "eval BASH-EXPR"       "Passthrough, to execute anything
 loop-hunter )      HELP "loop-hunter"          "Detect attribute loops:  nix-shell 2>&1 | nh loop-hunter" || return 0
                    loop_hunter;;
 
-progress )         HELP "progress"             "Live summary of new, complete and failing builds" || return 0
+p | progress )     HELP "progress"             "Live summary of new, complete and failing builds" || return 0
                    if    test -f "$(cat ${PKGDB}/current.build    2>/dev/null)"
                    then local log=$(cat ${PKGDB}/current.build    2>/dev/null)
                    else fail "Nothing to watch, exiting."
@@ -2935,7 +2940,7 @@ progress )         HELP "progress"             "Live summary of new, complete an
                    local nlines=$(stty size | awk '{print $1}')
                    watch --interval=1 --no-title bash -c "'cat $(cat ${PKGDB}/current.build    2>/dev/null) | nh x log_filter_progress' | tail -n$((nlines-1))";;
 
-watch )            HELP "watch"                "Observe the current build, as it hits the logs.." || return 0
+w | watch )        HELP "watch"                "Observe the current build, as it hits the logs.." || return 0
                    if    test -f "$(cat ${PKGDB}/current.build    2>/dev/null)"
                    then local log=$(cat ${PKGDB}/current.build    2>/dev/null)
                    else fail "Nothing to watch, exiting."
@@ -2943,8 +2948,7 @@ watch )            HELP "watch"                "Observe the current build, as it
                    echo "watching $log"
                    tail -f "$log";;
 
-ghc )
-                   HELP "ghc"                    "Shell with current GHC" || return 0
+ghc )              HELP "ghc"                    "Shell with current GHC" || return 0
                    nix-shell -p haskell.compiler.ghc${GHC};;
 
 pghc | prefetch-ghc )
