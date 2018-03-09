@@ -374,6 +374,24 @@ nix_drv_src() {
         local drv="$1"; shift
         nix-store --query --binding src ${drv}
 }
+nix_attr_drv_sdrv() {
+        local attr="$1"; shift
+        local drv="$1"; shift
+        nix-store --query --references ${drv} |
+            grep "/nix/store/[1-z0-9]*-\(source\|${attr}-[0-9]\)" | grep -v '\.cabal\.drv$'
+}
+nix_src_drv_url() {
+        local drv="$1"; shift
+        nix-store --query --binding urls ${drv}
+}
+nix_drv_inputs() {
+        local drv="$1"; shift
+        { nix-store --query --binding buildInputs                 ${drv}
+          nix-store --query --binding propagatedBuildInputs       ${drv}
+          nix-store --query --binding propagatedNativeBuildInputs ${drv}
+        } | one_per_line | grep -v '^$' | sort -t- -k2 | uniq
+}
+
 #+END_SRC
 * PKGDB
 *** Structural basis: TYPE/FIELD/NAME
@@ -2796,38 +2814,34 @@ ls-config )        HELP "ls-config"              "                             .
 *** Nix-level inferences
   #+begin_src sh :var title=(org-tangle-item)
 section-nix )
-section "${title}" drv src drv-src dependencies referrers;;
+section "${title}" drv ppdrv src src-drv src-url inputs dependencies referrers realise drv-pprint src-drv src-drv-url drv-inputs drv-refs deriver-of;;
 
 drv )              HELP "drv ATTR"                          "Store derivation for a single override" || return 0
                    local attr="$1"
                    do_instantiate ${attr};;
 
-ppdrv | pprint-drv )
+ppdrv | pp-drv | pprint-drv )
                    HELP "pprint-drv ATTR"                   "Pretty-print ATTR's derivation (requires nix-derivation-pretty)" || return 0
                    local attr="$1"
-                   do_instantiate ${attr} | xargs pp-drv;;
-
-r | realise | realise-drv )
-                   HELP "realise-drv ATTR"                  "Realise ATTR's derivation" || return 0
-                   local attr="$1"
-                   do_instantiate ${attr} | xargs nix-store --realise;;
+                   pp-drv $(do_instantiate ${attr});;
 
 src )              HELP "src ATTR"                          "Store source derivation for a single override" || return 0
                    local attr="$1"
-                   do_instantiate ${attr} | xargs nix-store --query --binding src;;
+                   nix_drv_src $(do_instantiate ${attr});;
 
-drv-src )          HELP "drv-src STORE-DRV"                 "Path to a Nix-stored .drv file" || return 0
-                   local drv="$1"
-                   nix-store --query --binding src ${drv};;
+sdrv | src-drv )   HELP "src-drv ATTR"                      "Store source derivation of ATTR" || return 0
+                   local attr="$1"
+                   nix_attr_drv_sdrv "${attr}" $(do_instantiate ${attr});;
+
+surl | src-url )   HELP "src-url ATTR"                      "Source URL of ATTR" || return 0
+                   local attr="$1"
+                   nix_src_drv_url $(nix_attr_drv_sdrv "${attr}" $(do_instantiate ${attr}));;
 
 in | inputs )
                    HELP "inputs ATTR"                       "ATTR's store inputs" || return 0
                    local attr="$1"
                    local drv="$(do_instantiate ${attr})"
-                   { nix-store --query --binding buildInputs                 ${drv}
-                     nix-store --query --binding propagatedBuildInputs       ${drv}
-                     nix-store --query --binding propagatedNativeBuildInputs ${drv}
-                   } | one_per_line | grep -v '^$' | sort -t- -k2 | uniq;;
+                   nix_drv_inputs "${drv}";;
 
 deps | dependencies | refs | references )
                    HELP "deps | refs | references ATTR"     "ATTR's store drv dependencies" || return 0
@@ -2838,6 +2852,40 @@ rdeps | referrers )
                    HELP "rdeps | referrers ATTR"            "ATTR's store reverse drv dependencies" || return 0
                    local attr="$1"
                    do_instantiate ${attr} | xargs nix-store --query --referrers;;
+
+r | realise | realise-drv )
+                   HELP "realise-drv ATTR"                  "Realise ATTR's derivation" || return 0
+                   local attr="$1"
+                   do_instantiate ${attr} | xargs nix-store --realise;;
+
+dpp | drv-pprint ) HELP "drv-pprint STORE-DRV"              "Pretty-print a Nix-stored .drv file" || return 0
+                   local drv="$1"
+                   pp-drv ${drv};;
+
+sdrv | src-drv )   HELP "src-drv STORE-DRV"                 "Store source derivation for a Nix-stored .drv file" || return 0
+                   local drv="$1"
+                   nix_drv_src ${drv};;
+
+sdurl | src-drv-url )
+                   HELP "src-drv-url STORE-DRV"             "Source URL of a Nix-stored source-.drv file" || return 0
+                   local drv="$1"
+                   nix_src_drv_url "${drv}";;
+
+din | drv-inputs )
+                   HELP "drv-inputs STORE-DRV"              "Store inputs for a Nix-stored .drv file" || return 0
+                   local drv="$1"
+                   nix_drv_inputs "${drv}";;
+
+ddeps | drefs | drv-refs | drv-references )
+                   HELP "drv-refs | drv-references STORE-DRV" "Store .drv references for a Nix-stored .drv file" || return 0
+                   local drv="$1"
+                   nix-store --query --references ${drv};;
+
+dof | deriver | deriver-of )
+                   HELP "deriver-of STORE-PATH"             "Store .drv for a Nix store path.  Will fail if built non-locally" || return 0
+                   local path="$1"
+                   nix-store --query --deriver ${path};;
+
 #+end_src
 * Top level: defining overrides
 *** Cabal-related
@@ -3061,9 +3109,10 @@ mods | modules | package-modules )
                    HELP "package-modules ATTR" "List ATTR's exposed modules" || return 0
                    ghc-pkg field "$1" "exposed-modules";;
 
-stepper )          HELP "stepper ATTR"         "Step through ATTR's build phases" || return 0
-                   # $prePhases unpackPhase patchPhase $preConfigurePhases configurePhase $preBuildPhases buildPhase checkPhase $preInstallPhases installPhase fixupPhase $preDistPhases distPhase $postPhases
-                   true;;
+phases | build-phases)
+                   HELP "phases ATTR"          "Print ATTR's build phases" || return 0
+                   echo $prePhases unpackPhase patchPhase $preConfigurePhases configurePhase $preBuildPhases buildPhase checkPhase $preInstallPhases installPhase fixupPhase $preDistPhases distPhase $postPhases
+                   ;;
 
 #+end_src
 *** Miscellanea
