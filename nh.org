@@ -1907,6 +1907,7 @@ override_builder() {
         if test ${status} != 0
         then
                 echo "FATAL: failed to prebuild deps of '${attr}'$(iff "" ", without overriding '${over}'" test "${over}" = baseline)" >&2
+                echo "FATAL: drv: ${store_drv}" >&2
                 local intermediate_failure=$(get ${LOGTY} "${over}" ${attr} | log_filter_failure)
 		if test -n "${intermediate_failure}"
 		then
@@ -1938,6 +1939,10 @@ override_builder() {
                 fi
         else
                 echo "FATAL: failed to build '${attr}'$(iff "" ", without overriding '${over}'" test "${over}" = baseline)" >&2
+                echo "FATAL: drv: ${store_drv}" >&2
+                local src_drv=$(nix_attr_drv_sdrv ${attr} ${store_drv})
+                echo "FATAL: src.drv: ${src_drv}" >&2
+                echo "FATAL: src URL: $(nix_src_drv_url ${src_drv})" >&2
                 echo "FATAL: logs:  nh log ${attr} $(iff "" "${over}" test "${over}" = baseline)" >&2
                 _set ${FAILTY}   ${over} ${attr} "DIRECT"
                 fail_classify_one_property ${over} ${attr}
