@@ -21,7 +21,7 @@ backtrace() {
    if test -z "${NH_BACKTRACE}"
    then return 0
    fi
-   ## Source: http://www.runscripts.com/support/guides/scripting/bash/debugging-bash/stack-trace
+   ## Source: https://www.runscripts.com/support/guides/scripting/bash/debugging-bash/stack-trace
    local frame=0
    local argv_offset=0
    local caller_info=
@@ -948,9 +948,8 @@ hackage_cabal_chdir() {
 }
 hackage_cabal_upstream_url() {
         local attr="$1"; shift
-        local ret=$(hackage_cabal ${attr} | sed -n '/^[Ss]ource-[Rr]epository head/,$ p' | grep -i "location:" |
-                    sed 's,^.*ocation:[ ]*\(https\|git\)\(://github.com/.*\)\.git$,https\2,;s,^.*ocation:[ ]*\(https\|git\)\(://github.com/.*\)$,https\2,' |
-                    remove_nonprintable)
+        local ret=$(hackage_cabal ${attr} | sed -n '/^[Ss]ource-[Rr]epository head/,$ p' | grep -i "location:" | remove_nonprintable |
+                    sed 's,^.*ocation:[ ]*\(https://\|git://\|git@\)\(github.com\)[/:]\(.*\)\.git$,https://\2/\3,;s,^.*ocation:[ ]*\(https\|git\)\(://github.com/.*\)$,https\2,')
         if test ${PIPESTATUS[0]} = 0 -a -n "$ret"
         then echo -n "$ret"
         else return 1
@@ -994,11 +993,19 @@ hackage_ahead_of_fix() {
         fi
 }
 
-github_repo_url_user() {
+## https://github.com/sdiehl/protolude
+github_repo_githttp_url_user() {
    cut -d/ -f4 <<< $1
 }
-github_repo_url_repo() {
+github_repo_githttp_url_repo() {
    cut -d/ -f5 <<< $1 | sed 's/\.git$//'
+}
+## git@github.com:sdiehl/protolude.git
+github_repo_gitssh_url_user() {
+   sed 's|.*:\([^/]*\)/\([^/]*\)\.git$|\1|' <<< $1
+}
+github_repo_gitssh_url_repo() {
+   sed 's|.*:\([^/]*\)/\([^/]*\)\.git$|\2|' <<< $1
 }
 
 commit_date() {
@@ -1620,9 +1627,11 @@ import_hackage_cabal() {
         then fail "failed to detect upstream URL for '$attr'"; fi
         local chdir="$(hackage_cabal_chdir $attr || true)"
 
-        local user="$(github_repo_url_user ${url})"
-        local repo="$(github_repo_url_repo ${url})"
-
+        local user= repo=
+        if grep 'git@github.com:' <<< "${url}"
+        then user="$(github_repo_gitssh_url_user ${url})"  repo="$(github_repo_gitssh_url_repo ${url})"
+        else user="$(github_repo_githttp_url_user ${url})" repo="$(github_repo_githttp_url_repo ${url})"
+        fi
         if test "${repo}" != "$(repoName "$attr")"
         then set_repoName "${attr}" "${repo}"
         fi
@@ -1668,7 +1677,7 @@ hackage() {
         local PACKAGE="$1"; shift
         local RELEASE="$1"
         local QUIET_REDIR="$(iff '2>/dev/null' '' test -n "${NH_QUIET}")"
-        local HASH="$(nix-prefetch-url http://hackage.haskell.org/package/${PACKAGE}-${RELEASE}.tar.gz ${QUIET_REDIR} | tr -d '\n')"
+        local HASH="$(nix-prefetch-url https://hackage.haskell.org/package/${PACKAGE}-${RELEASE}.tar.gz ${QUIET_REDIR} | tr -d '\n')"
 
         if test "${HASH}" = "${__EMPTY_HASH}" -o -z "${HASH}"
         then fail "zero tarball hash.  Bad package name or version?"
@@ -2595,6 +2604,16 @@ drv )              HELP "drv ATTR"                          "Store derivation fo
                    local attr="$1"
                    do_instantiate ${attr};;
 
+ppdrv | pprint-drv )
+                   HELP "pprint-drv ATTR"                   "Pretty-print ATTR's derivation (requires nix-derivation-pretty)" || return 0
+                   local attr="$1"
+                   do_instantiate ${attr} | xargs pp-drv;;
+
+r | realise | realise-drv )
+                   HELP "realise-drv ATTR"                  "Realise ATTR's derivation" || return 0
+                   local attr="$1"
+                   do_instantiate ${attr} | xargs nix-store --realise;;
+
 src )              HELP "src ATTR"                          "Store source derivation for a single override" || return 0
                    local attr="$1"
                    do_instantiate ${attr} | xargs nix-store --query --binding src;;
@@ -2603,13 +2622,22 @@ drv-src )          HELP "drv-src STORE-DRV"                 "Path to a Nix-store
                    local drv="$1"
                    nix-store --query --binding src ${drv};;
 
+in | inputs )
+                   HELP "inputs ATTR"                       "ATTR's store inputs" || return 0
+                   local attr="$1"
+                   local drv="$(do_instantiate ${attr})"
+                   { nix-store --query --binding buildInputs                 ${drv}
+                     nix-store --query --binding propagatedBuildInputs       ${drv}
+                     nix-store --query --binding propagatedNativeBuildInputs ${drv}
+                   } | one_per_line | grep -v '^$' | sort -t- -k2 | uniq;;
+
 deps | dependencies | refs | references )
-                   HELP "deps | refs | references ATTR"     "Store dependencies of an override" || return 0
+                   HELP "deps | refs | references ATTR"     "ATTR's store drv dependencies" || return 0
                    local attr="$1"
                    do_instantiate ${attr} | xargs nix-store --query --references;;
 
 rdeps | referrers )
-                   HELP "rdeps | referrers ATTR"            "Store reverse dependencies of an override" || return 0
+                   HELP "rdeps | referrers ATTR"            "ATTR's store reverse drv dependencies" || return 0
                    local attr="$1"
                    do_instantiate ${attr} | xargs nix-store --query --referrers;;
 
