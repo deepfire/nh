@@ -892,6 +892,7 @@ keysig=(
 "TESTSUITE-FAILURE||||^Failures:$"
 "NIX-ERROR-EVAL-ANON||||^error: while evaluating anonymous function at$"
 "HASKELL-DUPLICATE-INSTANCE||||Duplicate instance declarations:"
+"HADDOCK-CABAL-INTERNAL-ERROR||||Setup: internal error when calculating transitive package dependencies."
 )
 declare -A grepctx
 grepctx["CABAL-MISSING-DEPS"]="-A5"
@@ -911,6 +912,7 @@ grepctx["HADDOCK-INTERNAL-ERROR"]="-A7"
 grepctx["TESTSUITE-FAILURE"]="-A10"
 grepctx["NIX-ERROR-EVAL-ANON"]="-A10"
 grepctx["HASKELL-DUPLICATE-INSTANCE"]="-B1 -A3"
+grepctx["HADDOCK-CABAL-INTERNAL-ERROR"]="-B1 -A2"
 
 fail_classify_one_property() {
         local over="$1"; shift
@@ -1980,6 +1982,9 @@ acme() {
         echo "-( building ACME catch-all attribute that depends on everything overridden:"
         echo "--( < ${attr}"
         echo "--( > $(ls_acme_deps | xargs echo)"
+        if test -n "$(ls_extra_validation_attributes)"
+        then echo "--( ..of which non-overridden:  $(ls_extra_validation_attributes | xargs echo -n)"
+        fi
         echo "---(             logs:  nh logs ${attr} ${over}"
         echo "---(    watch it live:  nh watch  --or--  nh progress"
         echo -n "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
