@@ -3207,9 +3207,10 @@ diff | nixpkgs-diff )
                    HELP "nixpkgs-diff [(base-head|base-master|head-master] [REF]" \
                                                    "Diff of current GHC configuration" || return 0
                    local kind="${1:-base-head}" diffspec=; shift
-                   local ref="${1:-HEAD}"
+                   local ref="${1:-HEAD}" clean=
                    case "${kind}" in
                           tree )        fetch=  diffspec=;;
+                          tree-essence )fetch=  diffspec=  clean=y;;
                           base-head )   fetch=  diffspec="$(git -C "${NIXPKGS}" merge-base HEAD origin/master) HEAD";;
                           base-master ) fetch=y diffspec="$(git -C "${NIXPKGS}" merge-base HEAD origin/master) origin/master";;
                           to-master )   fetch=y diffspec="${ref} origin/master";;
@@ -3217,7 +3218,10 @@ diff | nixpkgs-diff )
                    esac
                    test -z "${fetch}" ||
                            git -C "${NIXPKGS}" fetch origin
-                   git -C "${NIXPKGS}" diff ${diffspec} ${GHC_CONFIG_FULL_PATH};;
+                   if test -n "${clean}"
+                   then git -C "${NIXPKGS}" diff ${diffspec} ${GHC_CONFIG_FULL_PATH} | grep -v '^[+-][ ]*#\|^[ @]'
+                   else git -C "${NIXPKGS}" diff ${diffspec} ${GHC_CONFIG_FULL_PATH}
+                   fi;;
 
 mentions | nixpkgs-mentions )
                    HELP "nixpkgs-mentions"       "Shell with current GHC" || return 0
