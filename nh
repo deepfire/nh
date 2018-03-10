@@ -1682,6 +1682,11 @@ github() {
         local repo=$(repoName ${attr})
 
         local REV="$(git ls-remote https://github.com/${user}/${repo} ${ref} | cut -f1)"
+              REV="${REV:-$2}"
+        if test "$(echo -n ${REV} | wc -c)" != 40
+        then fail "ref '$2' is not known at https://github.com/${user}/${repo}"
+        fi
+
         __EMPTY_REPO_HASH=0sjjj9z1dhilhpc8pq4154czrb79z9cm044jvn75kxcjv6v5l2m5
 
         local QUIET_REDIR="$(iff '2>/dev/null' '' test -n "${NH_QUIET}")"
@@ -2079,7 +2084,7 @@ try_fix() {
 
         git push --force orig
         github "${attr}" "${GITHUB_USER}"
-        build --limit-to-self --reuse-cache "${attr}"
+        build  --print-drv --limit-to-self --reuse-cache "${attr}"
 }
 
 install() {
@@ -2249,7 +2254,10 @@ audit_one() {
         if echo ${overrides} | grep -qw "src"
         then
         case $(status ${attr}) in
-        hackaged | shadowed )
+        shadowed )    
+                ## Proof-of-existence checks are only things the come to mind.
+                true;;
+        hackaged )
                 ## 1. Nixpkgs ought to be behind: nixpkgs release != upstream release (should be stricter: <)
                 local nixpkgs_release=$(get_nixpkgs_release ${attr})
                 local upstream_release=$(get_upstream_release ${attr})
@@ -2264,18 +2272,7 @@ audit_one() {
                               _set def/over src ${attr} ""
                               set +x
                          fi
-                # else echo "${attr}: ${nixpkgs_release} < ${upstream_release}"
                 fi
-                # if test_shadowed ${attr} && ! has def/hackage shadow ${attr}
-                # then
-                #         warn "${attr}" "shadow exists, but is not taken into account:  $(shadow_name ${attr})"
-                #         if test -n "${autofix}"
-                #         then shadow_name=$(shadow_name ${attr})
-                #              warn "AUTOMATIC FIX: adding shadow -- don't forget to regen overrides"; set -x
-                #              _set def/hackage shadow ${attr} "${shadow_name}"
-                #              set +x
-                #         fi
-                # fi
                 ;;
         upstreamed )
                 ## Upstreamed and unreleased:
