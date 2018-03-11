@@ -12,6 +12,7 @@ DEFAULT_GHC_CONFIG=configuration-ghc-8.4.x.nix
 ACME_ATTRIBUTE=nh-acme-grand-total-attribute
 TARGET_NIXPKGS=
 NH_QUIET=
+NIX_BUILD_OPTIONS="--show-trace --cores 0"
 
 #+end_src
 * Basis
@@ -349,8 +350,6 @@ then fail "missing tool:  nix-prefetch-git   (fix: nix-env -i nix-prefetch-scrip
 fi
 
 GHC_CONFIG_FULL_PATH=${NIXPKGS}/pkgs/development/haskell-modules/${GHC_CONFIG}
-
-NIX_BUILD_OPTIONS="--argstr compiler ghc${GHC} --show-trace --cores 0"
 #+END_SRC
 * Nix
 #+BEGIN_SRC sh
@@ -1905,7 +1904,7 @@ override_builder() {
         ### 2. prebuild context (shell_for() gets you here)
         ###
         echo -n      "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
-        nix-shell ${NIX_GHC_PACKAGE_SET} -A ${attr}.env ${NIX_BUILD_OPTIONS} 2>&1 \
+        nix-shell ${NIX_GHC_PACKAGE_SET} -A ${attr}.env --argstr compiler ghc${GHC} ${NIX_BUILD_OPTIONS} 2>&1 \
                 | set_stdin ${LOGTY} ${over} ${attr}
         local status=${PIPESTATUS[0]}
         if test ${status} != 0
@@ -1927,7 +1926,7 @@ override_builder() {
         ### 3. build
         ###
         echo -n      "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
-        nix-build ${NIX_GHC_PACKAGE_SET} -A ${attr} ${NIX_BUILD_OPTIONS} 2>&1 \
+        nix-build ${NIX_GHC_PACKAGE_SET} -A ${attr} --argstr compiler ghc${GHC} ${NIX_BUILD_OPTIONS} 2>&1 \
                 | set_stdin ${LOGTY} ${over} ${attr}
         ## Sadly the following doesn't create the output link, and stdout parsing is meh.
         # nix-store --realise ${store_drv} --cores 0 2>&1 \
@@ -1959,7 +1958,7 @@ override_builder() {
         for erdep in $(get def/meta erdeps ${attr})
         do
                 echo -n "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
-                nix-build ${NIX_GHC_PACKAGE_SET} -A ${erdep} ${NIX_BUILD_OPTIONS} 2>&1 \
+                nix-build ${NIX_GHC_PACKAGE_SET} -A ${erdep} --argstr compiler ghc${GHC} ${NIX_BUILD_OPTIONS} 2>&1 \
                         | set_stdin ${LOGTY} ${over} ${attr}
                 status=${PIPESTATUS[0]}
                 rm -f ${PKGDB}/current.build
@@ -2113,7 +2112,7 @@ acme() {
         echo "---(             logs:  nh logs ${attr} ${over}"
         echo "---(    watch it live:  nh watch  --or--  nh progress"
         echo -n "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
-        nix-shell ${NIX_GHC_PACKAGE_SET} -A ${attr} ${NIX_BUILD_OPTIONS} --no-out-link --keep-going 2>&1 \
+        nix-shell ${NIX_GHC_PACKAGE_SET} -A ${attr} --argstr compiler ghc${GHC} ${NIX_BUILD_OPTIONS} --no-out-link --keep-going 2>&1 \
                 | set_stdin ${LOGTY} ${over} ${attr}
         local status=${PIPESTATUS[0]}
         if test ${status} != 0
@@ -2132,7 +2131,7 @@ shell() {
         local attr=shell-environment over="default"
 
         echo -n "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
-        nix-shell ${NIX_BUILD_OPTIONS} --keep-going 2>&1 \
+        nix-shell --argstr compiler ghc${GHC} ${NIX_BUILD_OPTIONS} --keep-going 2>&1 \
                 | set_stdin ${LOGTY} ${over} ${attr}
         local status=${PIPESTATUS[0]}
         if test ${status} != 0
@@ -2150,7 +2149,7 @@ shell_for() {
         apply --reuse-cache ${_attr}
         local over="default"
 
-        nix-shell ${NIX_GHC_PACKAGE_SET} -A ${_attr}.env ${NIX_BUILD_OPTIONS} "$@"
+        nix-shell ${NIX_GHC_PACKAGE_SET} --argstr compiler ghc${GHC} -A ${_attr}.env ${NIX_BUILD_OPTIONS} "$@"
 }
     #+END_SRC
 *** cabal-shell
