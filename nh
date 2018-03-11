@@ -2436,6 +2436,15 @@ EOF
         echo
 }
 
+OP_ATTR=
+OP_GLOBAL=
+OP_NO_BUILD=
+OP_COMMIT=
+
+alias APPLY_ATTR='         OP_ATTR="$1"; shift'
+alias APPLY_ATTR_NO_BUILD='OP_ATTR="$1"; shift; OP_NO_BUILD=true'
+alias APPLY_GLOBAL='       OP_GLOBAL=true'
+
 COMMAND_GROUPS="general pkgdb meta overman status nix emission cabal github overhigh build maintain shell miscellanea"
 
 command_dispatch() {
@@ -2919,15 +2928,6 @@ www )              # HELP "www URL-KIND ATTR"     "Elinks -> an URL associated w
  * )		   fail "unknown command '${command}'";;
 esac
 }
-
-OP_ATTR=
-OP_GLOBAL=
-OP_NO_BUILD=
-OP_COMMIT=
-
-alias APPLY_ATTR='         OP_ATTR="$1"; shift'
-alias APPLY_ATTR_NO_BUILD='OP_ATTR="$1"; shift; OP_NO_BUILD=true'
-alias APPLY_GLOBAL='       OP_GLOBAL=true'
 
 while test $# -ge 1
 do case "$1"

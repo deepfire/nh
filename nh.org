@@ -2604,6 +2604,24 @@ EOF
         echo
 }
 #+END_SRC
+* Top level composition
+
+  =nh= is defined as a composition of two function halves:
+    - a top level command interpreter, whose subcommands often affects the PKGDB, and
+    - a post-phase that synchronises/records the changes in the generated package set
+
+  The following variables serve as communication between the two halves:
+
+#+BEGIN_SRC sh
+OP_ATTR=
+OP_GLOBAL=
+OP_NO_BUILD=
+OP_COMMIT=
+
+alias APPLY_ATTR='         OP_ATTR="$1"; shift'
+alias APPLY_ATTR_NO_BUILD='OP_ATTR="$1"; shift; OP_NO_BUILD=true'
+alias APPLY_GLOBAL='       OP_GLOBAL=true'
+#+END_SRC
 * Sub section index
 #+BEGIN_SRC sh
 COMMAND_GROUPS="general pkgdb meta overman status nix emission cabal github overhigh build maintain shell miscellanea"
@@ -3125,24 +3143,6 @@ www )              # HELP "www URL-KIND ATTR"     "Elinks -> an URL associated w
  * )		   fail "unknown command '${command}'";;
 esac
 }
-#+END_SRC
-* Top level composition
-
-  =nh= is defined as a composition of two function halves:
-    - a top level command interpreter, whose subcommands often affects the PKGDB, and
-    - a post-phase that synchronises/records the changes in the generated package set
-
-  The following variables serve as communication between the two halves:
-
-#+BEGIN_SRC sh
-OP_ATTR=
-OP_GLOBAL=
-OP_NO_BUILD=
-OP_COMMIT=
-
-alias APPLY_ATTR='         OP_ATTR="$1"; shift'
-alias APPLY_ATTR_NO_BUILD='OP_ATTR="$1"; shift; OP_NO_BUILD=true'
-alias APPLY_GLOBAL='       OP_GLOBAL=true'
 #+END_SRC
 * Top level: argument parsing
 #+begin_src sh
