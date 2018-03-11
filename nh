@@ -2444,18 +2444,6 @@ command_dispatch() {
         case "${command}" in
 help | "" )        print_help ${COMMAND_GROUPS};;
 
-section-general )
-section "General" ls info overview;;
-
-ls )               HELP "ls [REGEX]"               "List all overridden attributes" || return 0
-                   _ls | grep "$1" || true;;
-
-info | show )      HELP "info ATTR"                "Overview of an attribute's PKGDB" || return 0
-                   info "$1";;
-
-overview )         HELP "overview [ATTR..]"        "List overridden attributes, grouped by status + relevant info" || return 0
-                   overview "$@";;
-
 section-pkgdb )
 section "PKGDB" forall-defined-edit;;
 
@@ -2695,8 +2683,20 @@ cache )            HELP "cache [--require-descs]" \
 show-cache )       HELP "show-cache ATTR"      "Print the cached text of attribute's override (DEBUG)" || return 0
                    get cache override "$1";;
 
+section-general )
+section "General" ls info overview;;
+
+ls )               HELP "ls [REGEX]"               "List all overridden attributes" || return 0
+                   _ls | grep "$1" || true;;
+
+info | show )      HELP "info ATTR"                "Overview of an attribute's PKGDB" || return 0
+                   info "$1";;
+
+overview )         HELP "overview [ATTR..]"        "List overridden attributes, grouped by status + relevant info" || return 0
+                   overview "$@";;
+
 section-cabal )
-section "Cabal-related" import cabal;;
+section "Hackage" import cabal hackage;;
 
 import | import-cabal )
                    HELP "import ATTR"                            "Scrape ATTR's Cabal file from Hackage for some properties" || return 0
@@ -2708,14 +2708,34 @@ cabal | cabal-release )
                    APPLY_ATTR
                    hackage_cabal "$OP_ATTR";;
 
+h | hackage )	   HELP "hackage ATTR [RELEASE=upstream-latest]" "Override to a Hackage release" || return 0
+                   APPLY_ATTR
+                   local release="${1:-$(get_upstream_release $OP_ATTR)}"
+                   hackage "$OP_ATTR" "$release";;
+
 section-github )
-section "Github-based overrides" github set-upstream edit-upstream set-pr set-issue set-repoName edit-repoName;;
+section "Github" github unmerged upstream set-upstream edit-upstream set-pr set-issue set-repoName edit-repoName;;
 
 g | github )
                    HELP "github ATTR [REF]"                      "Override ATTR to its latest upstream Github commit" || return 0
                    APPLY_ATTR
                    local ref="$1" repo=$(repoName ${OP_ATTR})
                    github "$OP_ATTR" "$(get def/github user $repo)" ${ref};;
+
+unmerged )	   HELP "unmerged ATTR USER PR# [REV=HEAD]"      "Override to a 3rd-party Github commit" || return 0
+                   APPLY_ATTR
+                   local user="$1" pr="$2" rev="$3"
+                   test -n "$OP_ATTR" -a -n "$user" -a -n "pr" ||
+                           fail "Usage: $0 unmerged ATTR GH-USER PR-ID [GITREV]"
+                   github "$OP_ATTR" "$user" "$rev"
+                   _set def/github pr "$(repoName "$OP_ATTR")" "$pr";;
+
+upstream )	   HELP "upstream ATTR [REV=HEAD]"               "Override to an upstream Github commit" || return 0
+                   APPLY_ATTR
+                   local rev="$1"
+                   local repo=$(repoName ${attr})
+                   local user=$(get def/github upstream $repo)
+                   github "$OP_ATTR" "$user" "$rev";;
 
 set-upstream )     HELP "set-upstream ATTR GITHUB-USER"          "Specify an attribute's Github upstream username" || return 0
                    APPLY_ATTR
@@ -2744,29 +2764,6 @@ set-repoName )     HELP "set-repoName ATTR REPO"                 "Set an attribu
 edit-repoName )    HELP "edit-repoName ATTR"                     "Edit an attribute's Github repository name" || return 0
                    APPLY_ATTR
                    edit_repoName "$OP_ATTR";;
-
-section-overhigh )
-section "Override manipulation (high-level)" hackage unmerged upstream;;
-
-h | hackage )	   HELP "hackage ATTR [RELEASE=upstream-latest]" "Override to a Hackage release" || return 0
-                   APPLY_ATTR
-                   local release="${1:-$(get_upstream_release $OP_ATTR)}"
-                   hackage "$OP_ATTR" "$release";;
-
-unmerged )	   HELP "unmerged ATTR USER PR# [REV=HEAD]"      "Override to a 3rd-party Github commit" || return 0
-                   APPLY_ATTR
-                   local user="$1" pr="$2" rev="$3"
-                   test -n "$OP_ATTR" -a -n "$user" -a -n "pr" ||
-                           fail "Usage: $0 unmerged ATTR GH-USER PR-ID [GITREV]"
-                   github "$OP_ATTR" "$user" "$rev"
-                   _set def/github pr "$(repoName "$OP_ATTR")" "$pr";;
-
-upstream )	   HELP "upstream ATTR [REV=HEAD]"               "Override to an upstream Github commit" || return 0
-                   APPLY_ATTR
-                   local rev="$1"
-                   local repo=$(repoName ${attr})
-                   local user=$(get def/github upstream $repo)
-                   github "$OP_ATTR" "$user" "$rev";;
 
 section-build )
 section "Build & results" build log fail failure-log failure-type proof;;
@@ -2875,7 +2872,7 @@ phases | build-phases)
                    ;;
 
 section-miscellanea )
-section "Miscellanea" eval loop-hunter progress watch ghc prefetch-ghc;;
+section "Miscellanea" eval loop-hunter progress watch ghc prefetch-ghc mentions;;
 
 eval | x )         HELP "eval BASH-EXPR"       "Passthrough, to execute anything defined." || return 0
                    "$@";;
@@ -2907,6 +2904,12 @@ pghc | prefetch-ghc )
                    HELP "prefetch-ghc GITREV"    "Prefetch a GHC revision" || return 0
                    local rev="$1"; shift
                    nix-prefetch-git git://git.haskell.org/ghc.git --fetch-submodules --rev ${rev};;
+
+mentions | nixpkgs-mentions )
+                   HELP "nixpkgs-mentions"       "Shell with current GHC" || return 0
+                   
+                   git -C "${NIXPKGS}" fetch origin
+                   git -C "${NIXPKGS}" log --grep "@${GITHUB_USER}" origin/master;;
 
 www )              # HELP "www URL-KIND ATTR"     "Elinks -> an URL associated with ATTR" || return 0
                    local kind="$1" name="$2";

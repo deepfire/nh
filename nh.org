@@ -2608,7 +2608,7 @@ EOF
 #+BEGIN_SRC sh
 COMMAND_GROUPS="general pkgdb meta overman status nix emission cabal github overhigh build maintain shell miscellanea"
 #+END_SRC
-* Sub dispatch: basic override manipulation and queries
+* Sub dispatch: PKGDB low-level layer
 #+begin_src sh
 command_dispatch() {
 
@@ -2616,20 +2616,6 @@ command_dispatch() {
         case "${command}" in
 help | "" )        print_help ${COMMAND_GROUPS};;
 
-#+end_src
-*** General
-#+begin_src sh :var title=(org-tangle-item)
-section-general )
-section "${title}" ls info overview;;
-
-ls )               HELP "ls [REGEX]"               "List all overridden attributes" || return 0
-                   _ls | grep "$1" || true;;
-
-info | show )      HELP "info ATTR"                "Overview of an attribute's PKGDB" || return 0
-                   info "$1";;
-
-overview )         HELP "overview [ATTR..]"        "List overridden attributes, grouped by status + relevant info" || return 0
-                   overview "$@";;
 #+end_src
 *** PKGDB
 #+BEGIN_SRC sh :var title=(org-tangle-item)
@@ -2885,11 +2871,25 @@ cache )            HELP "cache [--require-descs]" \
 show-cache )       HELP "show-cache ATTR"      "Print the cached text of attribute's override (DEBUG)" || return 0
                    get cache override "$1";;
 #+end_src
-* Sub dispatch: defining overrides
-*** Cabal-related
+* Sub dispatch: Higher level
+*** General
+#+begin_src sh :var title=(org-tangle-item)
+section-general )
+section "${title}" ls info overview;;
+
+ls )               HELP "ls [REGEX]"               "List all overridden attributes" || return 0
+                   _ls | grep "$1" || true;;
+
+info | show )      HELP "info ATTR"                "Overview of an attribute's PKGDB" || return 0
+                   info "$1";;
+
+overview )         HELP "overview [ATTR..]"        "List overridden attributes, grouped by status + relevant info" || return 0
+                   overview "$@";;
+#+end_src
+*** Hackage
 #+begin_src sh :var title=(org-tangle-item)
 section-cabal )
-section "${title}" import cabal;;
+section "${title}" import cabal hackage;;
 
 import | import-cabal )
                    HELP "import ATTR"                            "Scrape ATTR's Cabal file from Hackage for some properties" || return 0
@@ -2900,17 +2900,38 @@ cabal | cabal-release )
                    HELP "cabal ATTR"                             "Print the latest released cabal file for ATTR" || return 0
                    APPLY_ATTR
                    hackage_cabal "$OP_ATTR";;
+
+h | hackage )	   HELP "hackage ATTR [RELEASE=upstream-latest]" "Override to a Hackage release" || return 0
+                   APPLY_ATTR
+                   local release="${1:-$(get_upstream_release $OP_ATTR)}"
+                   hackage "$OP_ATTR" "$release";;
+
 #+end_src
-*** Github-based overrides
+*** Github
 #+begin_src sh :var title=(org-tangle-item)
 section-github )
-section "${title}" github set-upstream edit-upstream set-pr set-issue set-repoName edit-repoName;;
+section "${title}" github unmerged upstream set-upstream edit-upstream set-pr set-issue set-repoName edit-repoName;;
 
 g | github )
                    HELP "github ATTR [REF]"                      "Override ATTR to its latest upstream Github commit" || return 0
                    APPLY_ATTR
                    local ref="$1" repo=$(repoName ${OP_ATTR})
                    github "$OP_ATTR" "$(get def/github user $repo)" ${ref};;
+
+unmerged )	   HELP "unmerged ATTR USER PR# [REV=HEAD]"      "Override to a 3rd-party Github commit" || return 0
+                   APPLY_ATTR
+                   local user="$1" pr="$2" rev="$3"
+                   test -n "$OP_ATTR" -a -n "$user" -a -n "pr" ||
+                           fail "Usage: $0 unmerged ATTR GH-USER PR-ID [GITREV]"
+                   github "$OP_ATTR" "$user" "$rev"
+                   _set def/github pr "$(repoName "$OP_ATTR")" "$pr";;
+
+upstream )	   HELP "upstream ATTR [REV=HEAD]"               "Override to an upstream Github commit" || return 0
+                   APPLY_ATTR
+                   local rev="$1"
+                   local repo=$(repoName ${attr})
+                   local user=$(get def/github upstream $repo)
+                   github "$OP_ATTR" "$user" "$rev";;
 
 set-upstream )     HELP "set-upstream ATTR GITHUB-USER"          "Specify an attribute's Github upstream username" || return 0
                    APPLY_ATTR
@@ -2940,32 +2961,6 @@ edit-repoName )    HELP "edit-repoName ATTR"                     "Edit an attrib
                    APPLY_ATTR
                    edit_repoName "$OP_ATTR";;
 #+end_src
-*** Override manipulation (high-level)
-  #+begin_src sh :var title=(org-tangle-item)
-section-overhigh )
-section "${title}" hackage unmerged upstream;;
-
-h | hackage )	   HELP "hackage ATTR [RELEASE=upstream-latest]" "Override to a Hackage release" || return 0
-                   APPLY_ATTR
-                   local release="${1:-$(get_upstream_release $OP_ATTR)}"
-                   hackage "$OP_ATTR" "$release";;
-
-unmerged )	   HELP "unmerged ATTR USER PR# [REV=HEAD]"      "Override to a 3rd-party Github commit" || return 0
-                   APPLY_ATTR
-                   local user="$1" pr="$2" rev="$3"
-                   test -n "$OP_ATTR" -a -n "$user" -a -n "pr" ||
-                           fail "Usage: $0 unmerged ATTR GH-USER PR-ID [GITREV]"
-                   github "$OP_ATTR" "$user" "$rev"
-                   _set def/github pr "$(repoName "$OP_ATTR")" "$pr";;
-
-upstream )	   HELP "upstream ATTR [REV=HEAD]"               "Override to an upstream Github commit" || return 0
-                   APPLY_ATTR
-                   local rev="$1"
-                   local repo=$(repoName ${attr})
-                   local user=$(get def/github upstream $repo)
-                   github "$OP_ATTR" "$user" "$rev";;
-#+end_src
-* Sub dispatch: building & maintaining attributes
 *** Build & results
   #+begin_src sh :var title=(org-tangle-item)
 section-build )
@@ -3030,7 +3025,6 @@ extra-attrs | extra-validation-attributes )
                    HELP "extra-validation-attributes" "Edit the set of attributes validated regardless of being overridden" || return 0
                    edit def/meta extra-validation-attributes "";;
 #+end_src
-* Sub dispatch: using overrides
 *** Nix shell
 #+begin_src sh :var title=(org-tangle-item)
 section-shell )
@@ -3080,10 +3074,11 @@ phases | build-phases)
                    ;;
 
 #+end_src
+* Sub dispatch: Misc
 *** Miscellanea
   #+begin_src sh :var title=(org-tangle-item)
 section-miscellanea )
-section "${title}" eval loop-hunter progress watch ghc prefetch-ghc;;
+section "${title}" eval loop-hunter progress watch ghc prefetch-ghc mentions;;
 
 eval | x )         HELP "eval BASH-EXPR"       "Passthrough, to execute anything defined." || return 0
                    "$@";;
@@ -3115,6 +3110,12 @@ pghc | prefetch-ghc )
                    HELP "prefetch-ghc GITREV"    "Prefetch a GHC revision" || return 0
                    local rev="$1"; shift
                    nix-prefetch-git git://git.haskell.org/ghc.git --fetch-submodules --rev ${rev};;
+
+mentions | nixpkgs-mentions )
+                   HELP "nixpkgs-mentions"       "Shell with current GHC" || return 0
+                   
+                   git -C "${NIXPKGS}" fetch origin
+                   git -C "${NIXPKGS}" log --grep "@${GITHUB_USER}" origin/master;;
 
 www )              # HELP "www URL-KIND ATTR"     "Elinks -> an URL associated with ATTR" || return 0
                    local kind="$1" name="$2";
