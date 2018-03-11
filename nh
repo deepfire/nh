@@ -1416,7 +1416,7 @@ emit_depends_extra() {
         if ! validate_depends_extra_name "${key}"
         then fail "invalid extra depends key: ${key}"
         fi
-        echo "    ${key}Depends = drv.${key}Depends ++ (with self; [ ${val} ]);";
+        echo "    ${key}Depends = (if builtins.hasAttr \"${key}Depends\" drv then drv.${key}Depends else []) ++ (with self; [ ${val} ]);";
 }
 
 emit_input_overrides() {
