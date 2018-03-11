@@ -143,7 +143,7 @@ remove_trailing_newline() {
         tr -d '\n'
 }
 remove_nonprintable() {
-        tr -dc [:print:]
+        tr -dc '[:print:]'
 }
 prefix_lines() {
         local prefix="$1"
@@ -831,8 +831,7 @@ url() {
         local subpath= gitrev=master pull_request= issue= release=
         while test $# -ge 1
         do case "$1"
-           in --subpath )              subpath="$2"; shift;;
-              --gitrev )               gitrev="$2";  shift;;
+           in --gitrev )               gitrev="$2";  shift;;
               --pull-request )         pull_request="$2";  shift;;
               --issue )                issue="$2";  shift;;
               --release )              release="$2"; shift;;
@@ -846,8 +845,8 @@ url() {
         case "${KIND}" in
                 upstream-github-cabal )      local upstream="$(upstream "${attr}")"
                                              repo="$(repoName "${attr}")"
-                                             echo -n "https://raw.githubusercontent.com/$(upstreamOrFail   $attr)/$repo/${gitrev}/$subpath$attr.cabal";;
-                user-github-cabal )          echo -n "https://raw.githubusercontent.com/$(repo_fixer $repo)/$repo/${gitrev}/$subpath$attr.cabal";;
+                                             echo -n "https://raw.githubusercontent.com/$(upstreamOrFail   $attr)/$repo/${gitrev}/$(get_def def/meta chdir $attr '')/$attr.cabal";;
+                user-github-cabal )          echo -n "https://raw.githubusercontent.com/$(repo_fixer $repo)/$repo/${gitrev}/$(get_def def/meta chdir $attr '')/$attr.cabal";;
                 upstream-github )            echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo";;
                 upstream-pulls )             echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/pulls";;
                 user-github )                echo -n "https://github.com/$(               repo_fixer $repo)/$repo";;
@@ -1009,9 +1008,8 @@ github_cabal() {
         local kind="$1"; shift
         local attr="$1"; shift
         local gitrev="${1:-master}"
-        local chdir="$(get_def def/meta chdir $attr '')"
 
-        curl -sL $(url ${kind}-github-cabal $(attrName ${attr}) --subpath "${chdir}${chdir:+/}" --gitrev "${gitrev}")
+        curl -sL $(url ${kind}-github-cabal $(attrName ${attr}) --gitrev "${gitrev}")
 }
       #+END_SRC
 *** Hackage
@@ -1119,12 +1117,12 @@ commit_timestamp() {
 get_upstream_release() {
         local attr="$1"; shift
         local gitrev="${1:-master}"
-        github_cabal upstream ${attr} ${gitrev} | grep -i '^version:' | sed 's/[vV]ersion:[ ]*//' | remove_nonprintable
+        github_cabal upstream ${attr} ${gitrev} | grep -i '^[Vv]ersion:' | sed 's/[vV]ersion:[ ]*//' | remove_nonprintable
 }
 get_user_release() {
         local attr="$1"; shift
         local gitrev="${1:-master}"
-        github_cabal user ${attr} ${gitrev} | grep -i '^version:' | sed 's/[vV]ersion:[ ]*//' | remove_nonprintable
+        github_cabal user ${attr} ${gitrev} | grep -i '^[Vv]ersion:' | sed 's/[vV]ersion:[ ]*//' | remove_nonprintable
 }
       #+END_SRC
 ***** pull-request-status
@@ -1447,7 +1445,6 @@ EOF
   #+BEGIN_SRC sh
 fail_uncached() {
         echo -e "\nERROR: attribute $1 has no override cache" >&2
-        echo "    ### XXX: broken/inconsistent attribute $1"
         # exit 1
 }
 emit_property_override() {
