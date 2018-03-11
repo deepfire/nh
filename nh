@@ -1997,38 +1997,6 @@ acme() {
         return ${status}
 }
 
-baseline() {
-        local reuse_cache= reuse_overrides=
-        while test $# -ge 1
-        do case "$1"
-           in --reuse-cache )          reuse_cache="--reuse-cache";;
-              --reuse-overrides )      reuse_overrides="--reuse-overrides";;
-              "--"* )                  fail "$0: unknown option: $1";;
-              * )                      break;;
-           esac
-           shift
-        done
-
-        local ATTRSET="$*"
-        if test -z "${ATTRSET}"
-        then ATTRSET="$(_ls def/over)"
-        fi
-
-        if test -z "${reuse_overrides}"
-        then apply ${reuse_cache}
-        fi
-
-        echo "-( validating baseline: all PKGDB overrides applied"
-        for attr in ${ATTRSET}
-        do
-                echo -n "--("
-                if ! build --reuse-overrides ${attr} "baseline"
-                then fail "broken baseline package:  ${attr}"
-                fi
-        done | tee ${PKGDB}/baseline.log
-        return ${PIPESTATUS[0]}
-}
-
 shell() {
         apply --reuse-cache
         local attr=shell-environment over="default"
@@ -2243,7 +2211,7 @@ audit_one() {
 			warn      "${attr}.${over}" "no proof:  nh x emit_explanation ${over} ${attr}"; status=1
 			if test_suggested_by_trim ${over} ${attr}
 			then warn "${attr}.${over}" "*** already suggested for trimming ***"
-			else warn "${attr}.${over}" "retrim:    nh trim --skip-baseline ${attr}"
+			else warn "${attr}.${over}" "retrim:    nh trim ${attr}"
 			fi
            fi
         done
@@ -2382,10 +2350,10 @@ audit_one() {
 }
 
 audit() {
-        local skip_baseline= reuse_cache= reuse_overrides= autofix=
+        local skip_acme= reuse_cache= reuse_overrides= autofix=
         while test $# -ge 1
         do case "$1"
-           in --skip-baseline )        skip_baseline="--skip-baseline";;
+           in --skip-acme )            skip_acme="--skip-acme";;
               --reuse-cache )          reuse_cache="--reuse-cache";;
               --reuse-overrides )      reuse_overrides="--reuse-overrides";;
               --autofix )              autofix="--autofix";;
@@ -2400,8 +2368,8 @@ audit() {
         then ATTRSET="$(_ls def/over)"
         fi
 
-        if   test -z "${skip_baseline}"
-        then baseline  ${reuse_cache} ${reuse_overrides}
+        if   test -z "${skip_acme}"
+        then acme      ${reuse_cache} ${reuse_overrides}
         elif test -z "${reuse_overrides}"
         then apply     ${reuse_cache}
         fi

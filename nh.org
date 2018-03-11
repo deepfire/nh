@@ -2125,40 +2125,6 @@ acme() {
         return ${status}
 }
 #+END_SRC
-*** baseline
-#+BEGIN_SRC sh
-baseline() {
-        local reuse_cache= reuse_overrides=
-        while test $# -ge 1
-        do case "$1"
-           in --reuse-cache )          reuse_cache="--reuse-cache";;
-              --reuse-overrides )      reuse_overrides="--reuse-overrides";;
-              "--"* )                  fail "$0: unknown option: $1";;
-              * )                      break;;
-           esac
-           shift
-        done
-
-        local ATTRSET="$*"
-        if test -z "${ATTRSET}"
-        then ATTRSET="$(_ls def/over)"
-        fi
-
-        if test -z "${reuse_overrides}"
-        then apply ${reuse_cache}
-        fi
-
-        echo "-( validating baseline: all PKGDB overrides applied"
-        for attr in ${ATTRSET}
-        do
-                echo -n "--("
-                if ! build --reuse-overrides ${attr} "baseline"
-                then fail "broken baseline package:  ${attr}"
-                fi
-        done | tee ${PKGDB}/baseline.log
-        return ${PIPESTATUS[0]}
-}
-#+END_SRC
 *** shell
     #+begin_src sh
 shell() {
@@ -2541,10 +2507,10 @@ audit_one() {
 *** audit
 #+BEGIN_SRC sh
 audit() {
-        local skip_baseline= reuse_cache= reuse_overrides= autofix=
+        local skip_acme= reuse_cache= reuse_overrides= autofix=
         while test $# -ge 1
         do case "$1"
-           in --skip-baseline )        skip_baseline="--skip-baseline";;
+           in --skip-acme )            skip_acme="--skip-acme";;
               --reuse-cache )          reuse_cache="--reuse-cache";;
               --reuse-overrides )      reuse_overrides="--reuse-overrides";;
               --autofix )              autofix="--autofix";;
@@ -2559,8 +2525,8 @@ audit() {
         then ATTRSET="$(_ls def/over)"
         fi
 
-        if   test -z "${skip_baseline}"
-        then baseline  ${reuse_cache} ${reuse_overrides}
+        if   test -z "${skip_acme}"
+        then acme      ${reuse_cache} ${reuse_overrides}
         elif test -z "${reuse_overrides}"
         then apply     ${reuse_cache}
         fi
@@ -3016,7 +2982,7 @@ proof )            HELP "proof ATTR [OVER]" "Print an override's proof of necess
 *** Override database maintenance
   #+begin_src sh :var title=(org-tangle-item)
 section-maintain )
-section "${title}" instantiate acme baseline trim trim-override show-trims execute-trims audit extra-validation-attributes;;
+section "${title}" instantiate acme trim trim-override show-trims execute-trims audit extra-validation-attributes;;
 
 instantiate )      HELP "instantiate [--reuse-cache] [ATTR..]" "Instantiate overridden attrs (or specified subset)" || return 0
                    instantiate "$@";;
@@ -3024,9 +2990,6 @@ instantiate )      HELP "instantiate [--reuse-cache] [ATTR..]" "Instantiate over
 acme )
                    HELP "acme [--reuse-cache]" "Build everything at once, collecting all failures" || return 0
                    acme "$@";;
-
-baseline )         HELP "baseline [--reuse-{overrides,cache}] [ATTR..]" "Build overridden attrs (or specified subset)" || return 0
-                   baseline "$@";;
 
 trim )             HELP "trim [--reuse-cache] [ATTR..]" \
                            "Suggest a reduction to the override set (or specified subset)" || return 0
