@@ -208,7 +208,7 @@ $ nh unmerged securemem shlevy 12 6168d90b00bfc6a559d3b9160732343644ef60fb
 * Appendix: help
 
 #+BEGIN_SRC
-Usage:  nh [--cls] [--nixpkgs] [--trace] [--debug] SUBCMD [SUBARGS..]
+sage:  nh [--cls] [--nixpkgs] [--trace] [--debug] [--quiet] SUBCMD [SUBARGS..]
 
 NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
        for /home/deepfire/nixpkgs/pkgs/development/haskell-modules/configuration-ghc-8.4.x.nix
@@ -254,7 +254,8 @@ NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
    dontHaddock ATTR          Disable Haddock generation
    jailbreak ATTR            Turn on jailbreaking
    dontJailbreak ATTR        Disable an existing jailbreak override
-   extraLibs ATTR [ATTR..]   Specify extra dependencies;  "" removes the override
+   libraryHaskell ATTR [ATTR..]
+                             Specify extra libraryHaskellDepends;  "" removes the override
 
   Status:
 
@@ -268,11 +269,22 @@ NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
   Nix-level inferences:
 
    drv ATTR                  Store derivation for a single override
+   pprint-drv ATTR           Pretty-print ATTR's derivation (requires nix-derivation-pretty)
    src ATTR                  Store source derivation for a single override
-   drv-src STORE-DRV         Path to a Nix-stored .drv file
+   src-drv ATTR              Store source derivation of ATTR
+   src-url ATTR              Source URL of ATTR
+   inputs ATTR               ATTR's store inputs
    deps | refs | references ATTR
-                             Store dependencies of an override
-   rdeps | referrers ATTR    Store reverse dependencies of an override
+                             ATTR's store drv dependencies
+   rdeps | referrers ATTR    ATTR's store reverse drv dependencies
+   realise-drv ATTR          Realise ATTR's derivation
+   drv-pprint STORE-DRV      Pretty-print a Nix-stored .drv file
+   src-drv ATTR              Store source derivation of ATTR
+   src-drv-url STORE-DRV     Source URL of a Nix-stored source-.drv file
+   drv-inputs STORE-DRV      Store inputs for a Nix-stored .drv file
+   drv-refs | drv-references STORE-DRV
+                             Store .drv references for a Nix-stored .drv file
+   deriver-of STORE-PATH     Store .drv for a Nix store path.  Will fail if built non-locally
 
   Cabal-related:
 
@@ -281,7 +293,7 @@ NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
 
   Github-based overrides:
 
-   github ATTR               Override ATTR to its latest upstream Github commit
+   github ATTR [REF]         Override ATTR to its latest upstream Github commit
    set-upstream ATTR GITHUB-USER
                              Specify an attribute's Github upstream username
    edit-upstream ATTR        Edit an attribute's Github upstream username
@@ -341,6 +353,7 @@ NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
    loop-hunter               Detect attribute loops:  nix-shell 2>&1 | nh loop-hunter
    progress                  Live summary of new, complete and failing builds
    watch                     Observe the current build, as it hits the logs..
-   ghc-update GITREV         Prefetch a GHC revision
+   ghc                       Shell with current GHC
+   prefetch-ghc GITREV       Prefetch a GHC revision
 
 #+END_SRC
