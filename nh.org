@@ -198,44 +198,8 @@ function V() # $1-a $2-op $3-$b
 }
 #+END_SRC
 * Early init
-*** Ensure config and PKGDB exist
+*** Emission of default configs and Nix expressions
 #+BEGIN_SRC sh
-init_pkgdb() {
-        set -x
-        local dir="$1" force="$2"
-
-        if   test -e "${dir}" -a "${force}" != "--force"
-        then fail "cannot make a new override database at '${dir}': already exists"
-        elif test -z "${dir}"
-        then fail "override DB location not specified"
-        fi
-
-        mkdir -p ${dir}/def/{over,meta,github,hackage}
-        mkdir -p ${dir}/cache
-        mkdir -p ${dir}/build/{log,drv,expr,src,success,failure{,-type,-log}}
-        rm -f ${dir}/def/{over,meta,github,hackage}/*
-        rm -f ${dir}/cache/*
-        rm -f ${dir}/build/{log,drv,expr,src,success,failure{,-type,-log}}/*
-        exit 0
-}
-validate_pkgdb() {
-        local pkgdb="$1"
-        test    -d ${pkgdb}/def/over    \
-             -a -d ${pkgdb}/def/meta    \
-             -a -d ${pkgdb}/def/github  \
-             -a -d ${pkgdb}/def/hackage \
-             -a -d ${pkgdb}/build
-}
-# Simulate disjoint types
-LOGTY=build/log
-DRVTY=build/drv
-EXPRTY=build/expr
-SRCTY=build/src
-SUCCTY=build/success
-FAILTY=build/failure
-FAILTYTY=build/failure-type
-FAILLOGTY=build/failure-log
-
 emit_nh_config() {
         local PKGDB="$1" github_user="${2:-$USER}"
         cat <<EOF
@@ -286,6 +250,47 @@ in
   drv'.env
 EOF
 }
+#+END_SRC
+*** PKGDB initialisation and validation
+#+BEGIN_SRC sh
+init_pkgdb() {
+        set -x
+        local dir="$1" force="$2"
+
+        if   test -e "${dir}" -a "${force}" != "--force"
+        then fail "cannot make a new override database at '${dir}': already exists"
+        elif test -z "${dir}"
+        then fail "override DB location not specified"
+        fi
+
+        mkdir -p ${dir}/def/{over,meta,github,hackage}
+        mkdir -p ${dir}/cache
+        mkdir -p ${dir}/build/{log,drv,expr,src,success,failure{,-type,-log}}
+        rm -f ${dir}/def/{over,meta,github,hackage}/*
+        rm -f ${dir}/cache/*
+        rm -f ${dir}/build/{log,drv,expr,src,success,failure{,-type,-log}}/*
+        exit 0
+}
+validate_pkgdb() {
+        local pkgdb="$1"
+        test    -d ${pkgdb}/def/over    \
+             -a -d ${pkgdb}/def/meta    \
+             -a -d ${pkgdb}/def/github  \
+             -a -d ${pkgdb}/def/hackage \
+             -a -d ${pkgdb}/build
+}
+#+END_SRC
+*** Ensure config and PKGDB exist & activate them
+#+BEGIN_SRC sh
+# Simulate disjoint types
+LOGTY=build/log
+DRVTY=build/drv
+EXPRTY=build/expr
+SRCTY=build/src
+SUCCTY=build/success
+FAILTY=build/failure
+FAILTYTY=build/failure-type
+FAILLOGTY=build/failure-log
 
 ###
 ### Messy conflation of three requirements:
@@ -393,6 +398,9 @@ nix_drv_inputs() {
 
 #+END_SRC
 * PKGDB
+
+  PKGDB records per-attribute overrides and extended package metadata.
+
 *** Structural basis: TYPE/FIELD/NAME
 #+BEGIN_SRC sh
 path() {
@@ -1498,7 +1506,8 @@ EOF
         fi
 }
 EXTRA_PROPS="$(echo {setup,library,executable,test,benchmark}{Haskell,System,Pkgconfig,Tool})"
-EXTRA_PROPS_HANDLED_EXTRAED="libraryHaskellExtra"
+EXTRA_PROPS_HANDLED="libraryHaskell executableHaskell testHaskell"
+EXTRA_PROPS_HANDLED_EXTRAED="libraryHaskellExtra executableHaskellExtra testHaskellExtra"
 EXTRA_PROPS_CASE="$(sed 's/ / | /g' <<< "${EXTRA_PROPS}")"
 validate_depends_extra_name() {
         eval "case $1 in ${EXTRA_PROPS_CASE} ) return 0;; * ) return 1;; esac"
@@ -2365,7 +2374,7 @@ audit_one() {
 			warn      "${attr}.${over}" "no proof:  nh x emit_explanation ${over} ${attr}"; status=1
 			if test_suggested_by_trim ${over} ${attr}
 			then warn "${attr}.${over}" "*** already suggested for trimming ***"
-			else warn "${attr}.${over}" "retrim:    nh trim --skip-baseline ${attr}"
+			else warn "${attr}.${over}" "retrim:    nh trim ${attr}"
 			fi
            fi
         done
@@ -2595,37 +2604,17 @@ EOF
         echo
 }
 #+END_SRC
-* Argument parsing
-#+begin_src sh
-while test $# -ge 1
-do case "$1"
-   in --cls )              echo -en "\ec";;
-      --nixpkgs )          TARGET_NIXPKGS="--nixpkgs";;
-      --quiet | -q )       NH_QUIET="--quiet";;
-      --trace )            set -x; NH_TRACING=true;;
-      --traceless | -t )   shift; "$0" --trace "$@" 2>&1 | less;;
-      --full-trace )       set -x;;
-      --help | -h )        $0 help;;
-      --debug )            enable_debug
-                           # Unfortunately, this cannot work in general, because of the broken 'return 1' handling:
-                           shopt -s extdebug
-                           trap 'errexit' ERR # trap ERR to provide an error handler whenever a command exits nonzero this is a more verbose version of set -o errexit
-                           set -o errtrace    # setting errtrace allows our ERR trap handler to be propagated to functions,  expansions and subshells
-                           ;;
-      "--"* )              fail "$0: unknown option: $1";;
-      * )                  break;;
-   esac
-   shift
-done
-
-#+end_src
-* Top level: basic override manipulation and queries
+* Sub section index
+#+BEGIN_SRC sh
+COMMAND_GROUPS="general pkgdb meta overman status nix emission cabal github overhigh build maintain shell miscellanea"
+#+END_SRC
+* Sub dispatch: basic override manipulation and queries
 #+begin_src sh
 command_dispatch() {
 
         local command="$1"; shift 2>/dev/null || true
         case "${command}" in
-help | "" )        print_help general pkgdb meta overman status nix cabal github overhigh build maintain generate miscellanea;;
+help | "" )        print_help ${COMMAND_GROUPS};;
 
 #+end_src
 *** General
@@ -2669,33 +2658,36 @@ edit-meta )        HELP "edit-meta ATTR META"      "Edit the current attribute's
                    edit    def/meta  "$2" "$1";;
 
 disable )          HELP "disable ATTR[.OVER]"     "Disable all/single overrides for an attribute" || return 0
-                   local attr="$1" over="${2:+.$2}"
-                   _set       def/meta disable${over} "$attr" true
-                   apply "$1";;
+                   APPLY_ATTR
+                   local over="${1:+.$1}"
+                   _set       def/meta disable${over} "$OP_ATTR" true;;
 
 enable )           HELP "enable ATTR[.OVER]"      "Re-enable previously disabled overrides" || return 0
-                   local attr="$1" over="${2:+.$2}"
-                   _set       def/meta disable${over} "$attr" ""
-                   apply "$1";;
+                   APPLY_ATTR
+                   local over="${1:+.$1}"
+                   _set       def/meta disable${over} "$OP_ATTR" "";;
 
 set-explanation )  HELP "set-explanation ATTR OVER" "Provide a manual explanation for an override's existence" || return 0
-                   local attr="$1" over="$2"
-		   edit "def/meta" "${over}".explanation "${attr}";;
+                   APPLY_ATTR_NO_BUILD
+                   local over="$1"
+		   edit "def/meta" "${over}".explanation "${OP_ATTR}";;
 
 set-erdeps )       HELP "set-erdeps ATTR 'ATTR..'" "Set attribute's essential rev-deps that must keep working" || return 0
-                   local attr="$1"; shift
+                   APPLY_ATTR
                    local erdeps="$*"
-		   _set def/meta erdeps "${attr}" "${erdeps}";;
+		   _set def/meta erdeps "${OP_ATTR}" "${erdeps}";;
 
 chdir )            HELP "chdir ATTR SUBDIR"        "Change directory before build;  \"\" removes the override" || return 0
-                   _set    def/meta chdir   "$1" "$2"
-                   apply "$1";;
+                   APPLY_ATTR
+                   _set    def/meta chdir   "$OP_ATTR" "$1";;
 
 local )            HELP "local ATTR"               "Mark ATTR as local: not subject for Nixpkgs GHC configuration" || return 0
-                   _set    def/meta local   "$1" true;;
+                   APPLY_ATTR
+                   _set    def/meta local   "$OP_ATTR" true;;
 
 nonlocal )         HELP "nonlocal ATTR"            "Remove marking of ATTR as local" || return 0
-                   _set    def/meta local   "$1" "";;
+                   APPLY_ATTR
+                   _set    def/meta local   "$OP_ATTR" "";;
 
 #+end_src
 *** Override manipulation (low level)
@@ -2703,63 +2695,74 @@ nonlocal )         HELP "nonlocal ATTR"            "Remove marking of ATTR as lo
 section-overman )
 section "${title}" \
          remove ls-over ls-input-overs get set edit \
-         dontRevision check dontCheck haddock dontHaddock jailbreak dontJailbreak libraryHaskell;;
+         dontRevision check dontCheck haddock dontHaddock jailbreak dontJailbreak libraryHaskell;; ## No need for many similary help entries
 
 remove )           HELP "remove ATTR[.OVER]"      "Remove specified overrides" || return 0
-                   local attr="$1" over="${2:+.$2}"
-                   remove "${attr}" "${over}"
-                   apply "${attr}";;
+                   APPLY_ATTR
+                   local over="${1:+.$1}"
+                   remove "$OP_ATTR" "${over}";;
 
 ls-over )          HELP "ls-over ATTR"            "List attribute's overrides" || return 0
-                   lsattrs def/over              "$1";;
+                   lsattrs def/over               "$1";;
 
 lsio | lsiovers | ls-input-overs )
                    HELP "ls-input-overs ATTR"     "List attribute's input overrides" || return 0
-                   lsiovers def/over             "$1";;
+                   lsiovers def/over              "$1";;
 
 get )              HELP "get ATTR OVER"           "Get an attribute's override value" || return 0
-                   get  def/over "$2"            "$1";;
+                   get  def/over                  "$2" "$1";;
 
 set )              HELP "set ATTR OVER VAL"       "Set an attribute's override value;  \"\" removes the override" || return 0
-                   _set def/over "$2"            "$1" "$3"; apply "$1";;
+                   APPLY_ATTR
+                   _set def/over                  "$1" "$OP_ATTR" "$2";;
 
 edit )             HELP "edit ATTR OVER"          "Edit the current attribute's value using readline" || return 0
-                   edit def/over                 "$2" "$1";   apply "$1";;
+                   APPLY_ATTR
+                   edit def/over                  "$1" "$OP_ATTR";;
 
 setio | set-iover | set-input-over )
                    HELP "set-input-over ATTR INPUT VAL" \
                                                   "Set ATTR's override for INPUT" || return 0
-                   set_iover "$1" "$2" "$3";;
+                   APPLY_ATTR
+                   set_iover                      "$OP_ATTR" "$1" "$2";;
 
-dr | dontRevision )     HELP "edit ATTR OVER"          "Edit the current attribute's value using readline" || return 0
-                   _set def/over revision        "$1" "null"
-                   _set def/over editedCabalFile "$1" "null"; apply "$1";;
+dr | dontRevision )
+                   HELP "edit ATTR OVER"          "Edit the current attribute's value using readline" || return 0
+                   APPLY_ATTR
+                   _set def/over revision         "$OP_ATTR" "null"
+                   _set def/over editedCabalFile  "$OP_ATTR" "null";;
 
 check | doCheck )  HELP "check ATTR"              "Disable an existing dontCheck override" || return 0
-                   _set def/over doCheck         "$1";        apply "$1";;
+                   APPLY_ATTR
+                   _set def/over doCheck          "$OP_ATTR";;
 
-dc | dontCheck )        HELP "dontCheck ATTR"          "Disable tests" || return 0
-                   _set def/over doCheck         "$1" false;  apply "$1";;
+dc | dontCheck )   HELP "dontCheck ATTR"          "Disable tests" || return 0
+                   APPLY_ATTR
+                   _set def/over doCheck          "$OP_ATTR" false;;
 
 haddock | doHaddock )
                    HELP "haddock ATTR"            "Disable an existing dontHaddock override" || return 0
-                   _set def/over doHaddock       "$1";        apply "$1";;
+                   APPLY_ATTR
+                   _set def/over doHaddock        "$OP_ATTR";;
 
-dh | dontHaddock )      HELP "dontHaddock ATTR"        "Disable Haddock generation" || return 0
-                   _set def/over doHaddock       "$1" false;  apply "$1";;
+dh | dontHaddock ) HELP "dontHaddock ATTR"        "Disable Haddock generation" || return 0
+                   APPLY_ATTR
+                   _set def/over doHaddock        "$OP_ATTR" false;;
 
 j | jailbreak | doJailbreak )
                    HELP "jailbreak ATTR"          "Turn on jailbreaking" || return 0
-                   _set def/over jailbreak       "$1" true;   apply "$1";;
+                   APPLY_ATTR
+                   _set def/over jailbreak        "$OP_ATTR" true;;
 
 dontJailbreak )    HELP "dontJailbreak ATTR"      "Disable an existing jailbreak override" || return 0
-                   _set def/over jailbreak       "$1";        apply "$1";;
+                   APPLY_ATTR
+                   _set def/over jailbreak        "$OP_ATTR";;
 
-libraryHaskell )
-                   HELP "libraryHaskell ATTR [ATTR..]" \
-                                                  "Specify extra libraryHaskellDepends;  \"\" removes the override" || return 0
-                   local attr="$1"; shift
-                   _set def/over libraryHaskell   "$attr" "$*";   apply "$attr";;
+libraryHaskell | executableHaskell | testHaskell )
+                   HELP "{library,executable,test}Haskell ATTR [ATTR..]" \
+                                                  "Specify extra *HaskellDepends;  \"\" removes the override" || return 0
+                   APPLY_ATTR
+                   _set def/over "${command}"     "$OP_ATTR" "$*";;
 #+end_src
 *** Status
   #+begin_src sh :var title=(org-tangle-item)
@@ -2860,7 +2863,29 @@ dof | deriver | deriver-of )
                    nix-store --query --deriver ${path};;
 
 #+end_src
-* Top level: defining overrides
+*** PKGDB emission to Nix overrides
+  #+begin_src sh :var title=(org-tangle-item)
+section-emission )
+section "${title}" over apply cache show-cache;;
+
+o | over | override | show-override )
+                   HELP "over | override | show-override ATTR" \
+                           "Print the attribute's override defined by PKGDB" || return 0
+                   emit_override "$1";;
+
+a | overrides | apply )
+                   HELP "apply [--reuse-cache]" \
+                           "Apply all overrides via ${NIX_GHC_OVERRIDES}" || return 0
+                   apply "$@";;
+
+cache )            HELP "cache [--require-descs]" \
+                           "Regenerate override cache" || return 0
+                   cache "$@";;
+
+show-cache )       HELP "show-cache ATTR"      "Print the cached text of attribute's override (DEBUG)" || return 0
+                   get cache override "$1";;
+#+end_src
+* Sub dispatch: defining overrides
 *** Cabal-related
 #+begin_src sh :var title=(org-tangle-item)
 section-cabal )
@@ -2868,12 +2893,13 @@ section "${title}" import cabal;;
 
 import | import-cabal )
                    HELP "import ATTR"                            "Scrape ATTR's Cabal file from Hackage for some properties" || return 0
-                   local attr="$1"
-                   import_hackage_cabal "$1";;
+                   APPLY_ATTR
+                   import_hackage_cabal "$OP_ATTR";;
 
 cabal | cabal-release )
                    HELP "cabal ATTR"                             "Print the latest released cabal file for ATTR" || return 0
-                   hackage_cabal "$1";;
+                   APPLY_ATTR
+                   hackage_cabal "$OP_ATTR";;
 #+end_src
 *** Github-based overrides
 #+begin_src sh :var title=(org-tangle-item)
@@ -2882,44 +2908,37 @@ section "${title}" github set-upstream edit-upstream set-pr set-issue set-repoNa
 
 g | github )
                    HELP "github ATTR [REF]"                      "Override ATTR to its latest upstream Github commit" || return 0
-                   local attr="$1"; shift
-                   local ref="$1"
-                   local repo=$(repoName ${attr})
-                   github "$attr" "$(get def/github user $repo)" ${ref}
-                   apply  "$attr";;
+                   APPLY_ATTR
+                   local ref="$1" repo=$(repoName ${OP_ATTR})
+                   github "$OP_ATTR" "$(get def/github user $repo)" ${ref};;
 
 set-upstream )     HELP "set-upstream ATTR GITHUB-USER"          "Specify an attribute's Github upstream username" || return 0
-                   local attr="$1" upstream="$2"
-                   set_upstream "${attr}" "${upstream}"
-                   apply "$attr";;
+                   APPLY_ATTR
+                   local upstream="$1"
+                   set_upstream "${OP_ATTR}" "${upstream}";;
 
 edit-upstream )    HELP "edit-upstream ATTR"                     "Edit an attribute's Github upstream username" || return 0
-                   local attr="$1"
-                   edit_upstream "${attr}"
-                   apply "$attr";;
+                   APPLY_ATTR
+                   edit_upstream "${OP_ATTR}";;
 
 set-pr )           HELP "set-pr ATTR PR#"                        "Set the PR# of an attribute's Github override" || return 0
-                   local attr="$1" pr="$2"
-                   if test_is unmerged status "$attr"
-                   then _set def/github pr "$(repoName "$attr")" "$pr"
-                   else fail "not unmerged: $attr"
-                   fi
-                   apply "$attr";;
+                   APPLY_ATTR_NO_BUILD
+                   local pr="$1"
+                   _set def/github pr "$(repoName "$OP_ATTR")" "$pr";;
 
 set-issue )        HELP "set-issue ATTR ISSUE#"                  "Set the Issue# of an attribute's Github override" || return 0
-                   local attr="$1" issue="$2"
-                   _set def/github issue "$(repoName "$attr")" "$issue"
-                   apply "$attr";;
+                   APPLY_ATTR_NO_BUILD
+                   local issue="$1"
+                   _set def/github issue "$(repoName "$OP_ATTR")" "$issue";;
 
 set-repoName )     HELP "set-repoName ATTR REPO"                 "Set an attribute's Github repository name" || return 0
-                   local attr="$1" repo="$2"
-                   set_repoName "$attr" "$repo"
-                   apply "$attr";;
+                   APPLY_ATTR
+                   local repo="$1"
+                   set_repoName "$OP_ATTR" "$repo";;
 
 edit-repoName )    HELP "edit-repoName ATTR"                     "Edit an attribute's Github repository name" || return 0
-                   local attr="$1"
-                   edit_repoName "$attr"
-                   apply "$attr";;
+                   APPLY_ATTR
+                   edit_repoName "$OP_ATTR";;
 #+end_src
 *** Override manipulation (high-level)
   #+begin_src sh :var title=(org-tangle-item)
@@ -2927,31 +2946,36 @@ section-overhigh )
 section "${title}" hackage unmerged upstream;;
 
 h | hackage )	   HELP "hackage ATTR [RELEASE=upstream-latest]" "Override to a Hackage release" || return 0
-                   local attr="$1"
-                   local release="${2:-$(get_upstream_release ${attr})}"
-                   hackage "$attr" "$release"
-                   apply "$attr";;
+                   APPLY_ATTR
+                   local release="${1:-$(get_upstream_release $OP_ATTR)}"
+                   hackage "$OP_ATTR" "$release";;
 
 unmerged )	   HELP "unmerged ATTR USER PR# [REV=HEAD]"      "Override to a 3rd-party Github commit" || return 0
-                   local attr="$1" user="$2" pr="$3" rev="$4"
-                   test -n "$attr" -a -n "$user" -a -n "pr" ||
+                   APPLY_ATTR
+                   local user="$1" pr="$2" rev="$3"
+                   test -n "$OP_ATTR" -a -n "$user" -a -n "pr" ||
                            fail "Usage: $0 unmerged ATTR GH-USER PR-ID [GITREV]"
-                   github "$attr" "$user" "$rev"
-                   _set def/github pr "$(repoName "$attr")" "$pr"
-                   apply "$attr";;
+                   github "$OP_ATTR" "$user" "$rev"
+                   _set def/github pr "$(repoName "$OP_ATTR")" "$pr";;
 
 upstream )	   HELP "upstream ATTR [REV=HEAD]"               "Override to an upstream Github commit" || return 0
-                   local attr="$1" rev="$2"
+                   APPLY_ATTR
+                   local rev="$1"
                    local repo=$(repoName ${attr})
                    local user=$(get def/github upstream $repo)
-                   github "$attr" "$user" "$rev"
-                   apply "$attr";;
+                   github "$OP_ATTR" "$user" "$rev";;
 #+end_src
-* Top level: building & maintaining attributes
+* Sub dispatch: building & maintaining attributes
 *** Build & results
   #+begin_src sh :var title=(org-tangle-item)
 section-build )
 section "${title}" build log fail failure-log failure-type proof;;
+
+i | instantiate )  HELP "instantiate [--reuse-cache] [ATTR..]" "Instantiate overridden attrs (or specified subset)" || return 0
+                   instantiate "$@";;
+
+acme )             HELP "acme [--reuse-cache]"              "Build everything at once, collecting all failures" || return 0
+                   acme "$@";;
 
 b | build )        HELP "build [COMMON-OPTS] ATTR"          "Build a single attribute with current overrides" || return 0
                    build --print-drv --limit-to-self "$@";;
@@ -2983,13 +3007,6 @@ proof )            HELP "proof ATTR [OVER]" "Print an override's proof of necess
 section-maintain )
 section "${title}" instantiate acme trim trim-override show-trims execute-trims audit extra-validation-attributes;;
 
-instantiate )      HELP "instantiate [--reuse-cache] [ATTR..]" "Instantiate overridden attrs (or specified subset)" || return 0
-                   instantiate "$@";;
-
-acme )
-                   HELP "acme [--reuse-cache]" "Build everything at once, collecting all failures" || return 0
-                   acme "$@";;
-
 trim )             HELP "trim [--reuse-cache] [ATTR..]" \
                            "Suggest a reduction to the override set (or specified subset)" || return 0
                    trim "$@";;
@@ -3002,40 +3019,18 @@ show-trims )       HELP "show-trims" "Show the trim suggestion" || return 0
 
 apply-trim | apply-trims | execute-trims )
                    HELP "execute-trims" "Execute the suggestion" || return 0
-                   execute_trims "$@"
-                   apply;;
+                   APPLY_GLOBAL
+                   execute_trims "$@";;
 
-audit )            HELP "audit [--autofix] [--autoonly] [--skip-baseline] [--reuse-{overrides,cache}] [ATTR..]" \
+audit )            HELP "audit [--autofix] [--autoonly] [--skip-acme] [--reuse-{overrides,cache}] [ATTR..]" \
                            "Sanity check the overridden attrs (or specified subset).  --autofix applies suggestions" || return 0
                    audit "$@";;
 
-extra-validation-attributes )
+extra-attrs | extra-validation-attributes )
                    HELP "extra-validation-attributes" "Edit the set of attributes validated regardless of being overridden" || return 0
                    edit def/meta extra-validation-attributes "";;
 #+end_src
-*** Generation of overrides
-  #+begin_src sh :var title=(org-tangle-item)
-section-generate )
-section "${title}" over apply cache show-cache;;
-
-o | over | override | show-override )
-                   HELP "over | override | show-override ATTR" \
-                           "Print the attribute's override defined by PKGDB" || return 0
-                   emit_override "$1";;
-
-a | overrides | apply )
-                   HELP "apply [--reuse-cache]" \
-                           "Apply all overrides via ${NIX_GHC_OVERRIDES}" || return 0
-                   apply "$@";;
-
-cache )            HELP "cache [--require-descs]" \
-                           "Regenerate override cache" || return 0
-                   cache "$@";;
-
-show-cache )       HELP "show-cache ATTR"      "Print the cached text of attribute's override (DEBUG)" || return 0
-                   get cache override "$1";;
-#+end_src
-* Using overrides
+* Sub dispatch: using overrides
 *** Nix shell
 #+begin_src sh :var title=(org-tangle-item)
 section-shell )
@@ -3103,7 +3098,7 @@ p | progress )     HELP "progress"             "Live summary of new, complete an
                    fi
                    echo "watching ${log}"
                    local nlines=$(stty size | awk '{print $1}')
-                   watch --interval=1 --no-title bash -c "'cat $(cat ${PKGDB}/current.build    2>/dev/null) | nh x log_filter_progress' | tail -n$((nlines-1))";;
+                   watch --interval=1 --no-title bash -c "'cat $(cat ${PKGDB}/current.build    2>/dev/null) | nh --recurse x log_filter_progress' | tail -n$((nlines-1))";;
 
 w | watch )        HELP "watch"                "Observe the current build, as it hits the logs.." || return 0
                    if    test -f "$(cat ${PKGDB}/current.build    2>/dev/null)"
@@ -3129,10 +3124,79 @@ www )              # HELP "www URL-KIND ATTR"     "Elinks -> an URL associated w
  * )		   fail "unknown command '${command}'";;
 esac
 }
+#+END_SRC
+* Top level composition
 
-echo "nh $*" >> ~/.nh_history
+  =nh= is defined as a composition of two function halves:
+    - a top level command interpreter, whose subcommands often affects the PKGDB, and
+    - a post-phase that synchronises/records the changes in the generated package set
+
+  The following variables serve as communication between the two halves:
+
+#+BEGIN_SRC sh
+OP_ATTR=
+OP_GLOBAL=
+OP_NO_BUILD=
+OP_COMMIT=
+
+alias APPLY_ATTR='         OP_ATTR="$1"; shift'
+alias APPLY_ATTR_NO_BUILD='OP_ATTR="$1"; shift; OP_NO_BUILD=true'
+alias APPLY_GLOBAL='       OP_GLOBAL=true'
+#+END_SRC
+* Top level: argument parsing
+#+begin_src sh
+while test $# -ge 1
+do case "$1"
+   in 
+      --commit )           OP_COMMIT="$2"; shift;;
+      --nixpkgs )          TARGET_NIXPKGS="--nixpkgs";;
+      --no-build )         OP_NO_BUILD="--no-build";;
+
+      --cls )              echo -en "\ec";;
+      --quiet | -q )       NH_QUIET="--quiet";;
+
+      --full-trace )       set -x;;
+      --trace )            set -x; NH_TRACING=true;;
+      --traceless | -t )   shift; "$0" --trace "$@" 2>&1 | less;;
+      --debug )            enable_debug
+                           # Unfortunately, this cannot work in general, because of the broken 'return 1' handling:
+                           shopt -s extdebug
+                           trap 'errexit' ERR # trap ERR to provide an error handler whenever a command exits nonzero this is a more verbose version of set -o errexit
+                           set -o errtrace    # setting errtrace allows our ERR trap handler to be propagated to functions,  expansions and subshells
+                           ;;
+      --help | -h )        $0 help;;
+      --recurse )          NH_RECURSE="--recurse";;
+      "--"* )              fail "$0: unknown option: $1";;
+      * )                  break;;
+   esac
+   shift
+done
+test -z "${NH_RECURSE}" ||
+        echo "nh $*" >> ~/.nh_history
+#+END_SRC
+* Top level: sub dispatch
+
+#+begin_src sh
 command_dispatch "$@"
-  #+end_src
+#+end_src
+
+* Top level: Apply-Build-Commit (ABC) phase
+#+begin_src sh
+if   test -n                 "${OP_ATTR}"
+then apply                   "${OP_ATTR}";          OP_BUILD=true
+elif test -n                 "${OP_GLOBAL}"
+then apply;                                         OP_ACME=true
+fi
+if   test -n                 "${OP_BUILD}" -a -z "${OP_NO_BUILD}"
+then build --reuse-overrides "${OP_ATTR}"
+elif test -n                 "${OP_ACME}"  -a -z "${OP_NO_BUILD}"
+then acme  --reuse-overrides
+fi
+if   test -n                 "${OP_COMMIT}" -a -n "${TARGET_NIXPKGS}"
+then git -C "${NIXPKGS}" add ${GHC_CONFIG_FULL_PATH}
+     git commit -m "ghc${GHC}${OP_ATTR:+ | ${OP_ATTR}}:  ${OP_COMMIT}"
+fi
+#+end_src
 
   ;;; Local Variables:
   ;;; eval: (progn (add-hook 'after-save-hook 'org-babel-tangle) (defun org-tangle-item () (cdr (assoc "ITEM" (org-entry-properties last-heading-pos)))) (defun org-babel-expand-body-simple-loop (acc rest) (if rest (let ((subst-pat (concat "${" (symbol-name (caar rest)) "}"))) (org-babel-expand-body-simple-loop (replace-regexp-in-string subst-pat (cdar rest) acc) (cdr rest))) acc)) (defun org-babel-expand-body:sh (body params) (let ((vars (org-babel--get-vars params))) (org-babel-expand-body-simple-loop body vars))))
