@@ -90,6 +90,13 @@ ATEXIT_REMOVE_FILES=
 atexit_remove_files() {
 	rm -f ${ATEXIT_REMOVE_FILES}
 }
+ATEXIT_REENABLE_ATTRIBUTES=
+atexit_reenable_attributes() {
+        for x in ${ATEXIT_REENABLE_ATTRIBUTES}
+        do _set def/meta disable "$x" ""
+        done
+        apply ${ATEXIT_REENABLE_ATTRIBUTES}
+}
   #+END_SRC
 *** Shell library
     #+BEGIN_SRC sh
@@ -1500,6 +1507,7 @@ EOF
                         editedCabalFile )  echo "    editedCabalFile = ${editedCabalFile};";;
                         revision )         echo "    revision        = ${revision};";;
                         postPatch )        echo "    postPatch       = \"${postPatch}\";";;
+                        patches )          emit_patches "${attr}";;
                         *Extra )           emit_depends_extra "${propName}" "${propVal}";;
                         * ) fail "unknown property: '${propName}'";;
                 esac
@@ -1518,7 +1526,24 @@ emit_depends_extra() {
         if ! validate_depends_extra_name "${key}"
         then fail "invalid extra depends key: ${key}"
         fi
-        echo "    ${key}Depends = (if builtins.hasAttr \"${key}Depends\" drv then drv.${key}Depends else []) ++ (with self; [ ${val} ]);";
+        echo "    ${key}Depends = (drv.${key}Depends or []) ++ (with self; [ ${val} ]);";
+}
+emit_patches() {
+        local attr="$1"; shift
+        cat <<EOF
+    patches = (drv.patches or []) ++ [
+EOF
+        while read sha256 url
+        do cat <<EOF
+      (pkgs.fetchpatch
+       { url    = ${url};
+         sha256 = "${sha256}";
+       })
+EOF
+        done < $(path def/over patches ${attr})
+        cat <<EOF
+    ];
+EOF
 }
   #+END_SRC
 *** emit-input-overrides
@@ -1573,7 +1598,7 @@ EOF
                 cat <<EOF
   ${attr} = ${ioob}overrideCabal super.${base_attr} (drv: {
 EOF
-                local props="src doCheck doHaddock jailbreak editedCabalFile revision postPatch ${EXTRA_PROPS_HANDLED_EXTRAED}"
+                local props="src doCheck doHaddock jailbreak editedCabalFile revision postPatch ${EXTRA_PROPS_HANDLED_EXTRAED} patches"
                 for p in ${props}
                 do emit_property_override ${attr} $p
                 done
@@ -1648,6 +1673,13 @@ EOF
         tracing_resume emit-overrides
 }
   #+END_SRC
+*** global-output-cleanup-filter
+  #+BEGIN_SRC sh
+global_output_cleanup_filter() {
+        sed "s|/nix/store/[0-9a-z]-|/nix/store/HASH-|g; s|${NIXPKGS}|nixpkgs:/|" |
+                grep -v "cannot build derivation"
+}
+  #+END_SRC
 *** emit-overrides
   #+BEGIN_SRC sh
 emit_overrides() {
@@ -1715,7 +1747,7 @@ EOF
         echo
 
         if test -z "${suppress_content}"
-        then do_emit_overrides ${target:+--target ${target}}
+        then do_emit_overrides ${target:+--target ${target}} | global_output_cleanup_filter
         fi
 
         if test -n "${emit_acme}"
@@ -1912,7 +1944,6 @@ override_builder() {
         ###
         ### 2. prebuild context (shell_for() gets you here)
         ###
-        echo -n      "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
         nix-shell ${NIX_GHC_PACKAGE_SET} -A ${attr}.env --argstr compiler ghc${GHC} ${NIX_BUILD_OPTIONS} 2>&1 \
                 | set_stdin ${LOGTY} ${over} ${attr}
         local status=${PIPESTATUS[0]}
@@ -1934,14 +1965,12 @@ override_builder() {
         ###
         ### 3. build
         ###
-        echo -n      "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
         nix-build ${NIX_GHC_PACKAGE_SET} -A ${attr} --argstr compiler ghc${GHC} ${NIX_BUILD_OPTIONS} 2>&1 \
                 | set_stdin ${LOGTY} ${over} ${attr}
         ## Sadly the following doesn't create the output link, and stdout parsing is meh.
         # nix-store --realise ${store_drv} --cores 0 2>&1 \
         #         | set_stdin ${LOGTY} ${over} ${attr}
         status=${PIPESTATUS[0]}
-        rm -f ${PKGDB}/current.build
         if test ${status} = 0
         then
                 local drv=$(readlink result)
@@ -1966,11 +1995,9 @@ override_builder() {
         ###
         for erdep in $(get def/meta erdeps ${attr})
         do
-                echo -n "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
                 nix-build ${NIX_GHC_PACKAGE_SET} -A ${erdep} --argstr compiler ghc${GHC} ${NIX_BUILD_OPTIONS} 2>&1 \
                         | set_stdin ${LOGTY} ${over} ${attr}
                 status=${PIPESTATUS[0]}
-                rm -f ${PKGDB}/current.build
                 if test ${status} != 0
                 then
                         echo "FATAL: essential rev-dependency '${erdep}' breaks$(iff "with baseline ${attr}" ", without overriding ${attr}'s '${over}'" test "${over}" = baseline)" >&2
@@ -1985,6 +2012,18 @@ override_builder() {
         _set ${FAILLOGTY} ${over} ${attr} ""
         _set ${FAILTYTY}  ${over} ${attr} ""
         return 0
+}
+#+END_SRC
+*** list-builds
+#+BEGIN_SRC sh
+list_active_build_logs() {
+        find "${PKGDB}/build/log" -type f -cmin 1 2>/dev/null | sed "s|${PKGDB}/build/log/||"
+}
+#+END_SRC
+*** build-log-path
+#+BEGIN_SRC sh
+build_log_path() {
+        echo "${PKGDB}/build/log/$1"
 }
 #+END_SRC
 *** with-field-value
@@ -2097,10 +2136,11 @@ build() {
 #+BEGIN_SRC sh
 
 acme() {
-        local reuse_cache=
+        local reuse_cache= reuse_overrides=
         while test $# -ge 1
         do case "$1"
            in --reuse-cache )          reuse_cache="--reuse-cache";;
+              --reuse-overrides )      reuse_overrides="--reuse-overrides";;
               "--"* )                  fail "$0: unknown option: $1";;
               * )                      break;;
            esac
@@ -2120,7 +2160,6 @@ acme() {
         fi
         echo "---(             logs:  nh logs ${attr} ${over}"
         echo "---(    watch it live:  nh watch  --or--  nh progress"
-        echo -n "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
         nix-shell ${NIX_GHC_PACKAGE_SET} -A ${attr} --argstr compiler ghc${GHC} ${NIX_BUILD_OPTIONS} --no-out-link --keep-going 2>&1 \
                 | set_stdin ${LOGTY} ${over} ${attr}
         local status=${PIPESTATUS[0]}
@@ -2139,7 +2178,6 @@ shell() {
         apply --reuse-cache
         local attr=shell-environment over="default"
 
-        echo -n "$(path ${LOGTY} ${over} ${attr})" > ${PKGDB}/current.build
         nix-shell --argstr compiler ghc${GHC} ${NIX_BUILD_OPTIONS} --keep-going 2>&1 \
                 | set_stdin ${LOGTY} ${over} ${attr}
         local status=${PIPESTATUS[0]}
@@ -2187,7 +2225,7 @@ fixer_shell() {
 
         git clone ${upstream_url} ${repo}
         cd ${repo}
-        set def/github user ${repo} ${GITHUB_USER}
+        _set def/github user ${repo} ${GITHUB_USER}
         git remote add orig $(url self-github ${_attr})
 
         shell_for "${_attr}" --pure
@@ -2387,7 +2425,7 @@ audit_one() {
         if echo ${overrides} | grep -qw "src"
         then
         case $(status ${attr}) in
-        shadowed )    
+        shadowed )
                 ## Proof-of-existence checks are only things the come to mind.
                 true;;
         hackaged )
@@ -2624,7 +2662,7 @@ alias APPLY_GLOBAL='       OP_GLOBAL=true'
 #+END_SRC
 * Sub section index
 #+BEGIN_SRC sh
-COMMAND_GROUPS="general pkgdb meta overman status nix emission cabal github overhigh build maintain shell miscellanea"
+COMMAND_GROUPS="pkgdb meta overman status nix emission general hackage github build maintain shell miscellanea"
 #+END_SRC
 * Sub dispatch: PKGDB low-level layer
 #+begin_src sh
@@ -2647,7 +2685,7 @@ forall-defined-edit ) HELP "forall-defined-edit TYPE FIELD" "Interactively edit 
 *** Metadata (non-override)
 #+begin_src sh :var title=(org-tangle-item)
 section-meta )
-section "${title}" ls-meta meta set-meta edit-meta disable enable set-explanation set-erdeps chdir local nonlocal;;
+section "${title}" ls-meta meta set-meta edit-meta disable enable with-disabled ls-disabled set-explanation set-erdeps chdir local nonlocal;;
 
 ls-meta )          HELP "ls-meta ATTR"             "List attribute's metadata (as opposed to overrides" || return 0
                    lsattrs def/meta  "$1";;
@@ -2671,10 +2709,25 @@ enable )           HELP "enable ATTR[.OVER]"      "Re-enable previously disabled
                    local over="${1:+.$1}"
                    _set       def/meta disable${over} "$OP_ATTR" "";;
 
-set-explanation )  HELP "set-explanation ATTR OVER" "Provide a manual explanation for an override's existence" || return 0
+with-disabled | with-disabled-attrs )
+                   HELP "with-disabled-attrs ATTR.." \
+                                                  "Disable all listed attribute overrides and pause;  Re-enable on exit or newline in stdin" || return 0
+                   ATEXIT_REENABLE_ATTRIBUTES="$*"
+                   trap atexit_reenable_attributes= EXIT
+                   for x in ${ATEXIT_REENABLE_ATTRIBUTES}
+                   do _set def/meta disable "$x" "true"
+                   done
+                   apply ${ATEXIT_REENABLE_ATTRIBUTES}
+                   read;;
+
+ls-disabled )      HELP "ls-disabled"             "List all disabled attributes" || return 0
+                   filter test_overrides_disabled;;
+
+set-explanation )  HELP "set-explanation ATTR OVER VAL" \
+                                                   "Manually supply explanation for an override's existence" || return 0
                    APPLY_ATTR_NO_BUILD
-                   local over="$1"
-		   edit "def/meta" "${over}".explanation "${OP_ATTR}";;
+                   local over="$1" expl="$2"
+		   _set "def/meta" "${over}".explanation "${OP_ATTR}" "$2";;
 
 set-erdeps )       HELP "set-erdeps ATTR 'ATTR..'" "Set attribute's essential rev-deps that must keep working" || return 0
                    APPLY_ATTR
@@ -2698,8 +2751,8 @@ nonlocal )         HELP "nonlocal ATTR"            "Remove marking of ATTR as lo
   #+begin_src sh :var title=(org-tangle-item)
 section-overman )
 section "${title}" \
-         remove ls-over ls-input-overs get set edit \
-         dontRevision check dontCheck haddock dontHaddock jailbreak dontJailbreak libraryHaskell;; ## No need for many similary help entries
+         remove ls-over ls-input-overs get set edit setio \
+         dontRevision check dontCheck haddock dontHaddock jailbreak dontJailbreak libraryHaskell add-patch;; ## No need for many similary help entries
 
 remove )           HELP "remove ATTR[.OVER]"      "Remove specified overrides" || return 0
                    APPLY_ATTR
@@ -2767,6 +2820,13 @@ libraryHaskell | executableHaskell | testHaskell )
                                                   "Specify extra *HaskellDepends;  \"\" removes the override" || return 0
                    APPLY_ATTR
                    _set def/over "${command}"     "$OP_ATTR" "$*";;
+
+patch | add-patch )
+                   HELP "add-patch ATTR SHA256 URL" "Add a patch to ATTR" || return 0
+                   APPLY_ATTR
+                   local sha256="$1"; shift
+                   local url="$1";    shift
+                   echo "${sha256} ${url}" >> $(path def/over patches ${OP_ATTR});;
 #+end_src
 *** Status
   #+begin_src sh :var title=(org-tangle-item)
@@ -2906,7 +2966,7 @@ overview )         HELP "overview [ATTR..]"        "List overridden attributes, 
 #+end_src
 *** Hackage
 #+begin_src sh :var title=(org-tangle-item)
-section-cabal )
+section-hackage )
 section "${title}" import cabal hackage;;
 
 import | import-cabal )
@@ -2982,7 +3042,7 @@ edit-repoName )    HELP "edit-repoName ATTR"                     "Edit an attrib
 *** Build & results
   #+begin_src sh :var title=(org-tangle-item)
 section-build )
-section "${title}" build log fail failure-log failure-type proof;;
+section "${title}" instantiate acme build log fail failure-log failure-type proof;;
 
 i | instantiate )  HELP "instantiate [--reuse-cache] [ATTR..]" "Instantiate overridden attrs (or specified subset)" || return 0
                    instantiate "$@";;
@@ -3018,14 +3078,16 @@ proof )            HELP "proof ATTR [OVER]" "Print an override's proof of necess
 *** Override database maintenance
   #+begin_src sh :var title=(org-tangle-item)
 section-maintain )
-section "${title}" instantiate acme trim trim-override show-trims execute-trims audit extra-validation-attributes;;
+section "${title}" trim trim-override show-trims execute-trims audit extra-attrs edit-fixed;;
 
 trim )             HELP "trim [--reuse-cache] [ATTR..]" \
                            "Suggest a reduction to the override set (or specified subset)" || return 0
+                   APPLY_GLOBAL
                    trim "$@";;
 
 trim-override )    HELP "trim-override ATTR OVER" "Attempt trimming a specific override of a given attribute" || return 0
-                   trim_override "$@";;
+                   APPLY_ATTR
+                   trim_override "${OP_ATTR}" "$@";;
 
 show-trims )       HELP "show-trims" "Show the trim suggestion" || return 0
                    show_trims "$@";;
@@ -3042,7 +3104,12 @@ audit )            HELP "audit [--autofix] [--autoonly] [--skip-acme] [--reuse-{
 extra-attrs | extra-validation-attributes )
                    HELP "extra-validation-attributes" "Edit the set of attributes validated regardless of being overridden" || return 0
                    edit def/meta extra-validation-attributes "";;
+
+edit-fixed | edit-fixed-content )
+                   HELP "edit-fixed-content"  "Edit the static part of the GHC configuration" || return 0
+                   ${EDITOR} $(path def/meta ghc-configuration-fixed-content);;
 #+end_src
+* Sub dispatch: Misc
 *** Nix shell
 #+begin_src sh :var title=(org-tangle-item)
 section-shell )
@@ -3092,11 +3159,10 @@ phases | build-phases)
                    ;;
 
 #+end_src
-* Sub dispatch: Misc
 *** Miscellanea
   #+begin_src sh :var title=(org-tangle-item)
 section-miscellanea )
-section "${title}" eval loop-hunter progress watch ghc prefetch-ghc mentions;;
+section "${title}" eval loop-hunter ls-builds progress watch ghc prefetch-ghc less git diff mentions;;
 
 eval | x )         HELP "eval BASH-EXPR"       "Passthrough, to execute anything defined." || return 0
                    "$@";;
@@ -3104,20 +3170,21 @@ eval | x )         HELP "eval BASH-EXPR"       "Passthrough, to execute anything
 loop-hunter )      HELP "loop-hunter"          "Detect attribute loops:  nix-shell 2>&1 | nh loop-hunter" || return 0
                    loop_hunter;;
 
-p | progress )     HELP "progress"             "Live summary of new, complete and failing builds" || return 0
-                   if    test -f "$(cat ${PKGDB}/current.build    2>/dev/null)"
-                   then local log=$(cat ${PKGDB}/current.build    2>/dev/null)
-                   else fail "Nothing to watch, exiting."
+ls-builds )        HELP "ls-builds"            "List active builds" || return 0
+                   list_active_build_logs;;
+
+p | progress )     HELP "progress [LOG]"       "Live summary of new, complete and failing builds" || return 0
+                   if test ! -f "$(build_log_path ${1:-$(list_active_build_logs | head -n1)})"
+                   then fail "Nothing to watch, exiting."
                    fi
-                   echo "watching ${log}"
                    local nlines=$(stty size | awk '{print $1}')
-                   watch --interval=1 --no-title bash -c "'cat $(cat ${PKGDB}/current.build    2>/dev/null) | nh --recurse x log_filter_progress' | tail -n$((nlines-1))";;
+                   watch --interval=1 --no-title bash -c "'cat $(build_log_path ${1:-$(list_active_build_logs | head -n1)}) | nh --recurse x log_filter_progress' | tail -n$((nlines-1))";;
 
 w | watch )        HELP "watch"                "Observe the current build, as it hits the logs.." || return 0
-                   if    test -f "$(cat ${PKGDB}/current.build    2>/dev/null)"
-                   then local log=$(cat ${PKGDB}/current.build    2>/dev/null)
-                   else fail "Nothing to watch, exiting."
+                   if test ! -f "$(build_log_path ${1:-$(list_active_build_logs | head -n1)})"
+                   then fail "Nothing to watch, exiting."
                    fi
+                   log="$(build_log_path ${1:-$(list_active_build_logs | head -n1)})"
                    echo "watching $log"
                    tail -f "$log";;
 
@@ -3129,9 +3196,32 @@ pghc | prefetch-ghc )
                    local rev="$1"; shift
                    nix-prefetch-git git://git.haskell.org/ghc.git --fetch-submodules --rev ${rev};;
 
+less | less-ghc-config )
+                   HELP "less-ghc-config [NEEDLE]" "Run less on the Nixpkgs GHC configuration" || return 0
+                   less ${1:+ -p "$1"} ${GHC_CONFIG_FULL_PATH};;
+
+git )              HELP "git OPTIONS.. ARGS.."   "Run git inside controlled Nixpkgs" || return 0
+                   git -C "${NIXPKGS}" "$@";;
+
+diff | nixpkgs-diff )
+                   HELP "nixpkgs-diff [(base-head|base-master|head-master] [REF]" \
+                                                   "Diff of current GHC configuration" || return 0
+                   local kind="${1:-base-head}" diffspec=; shift
+                   local ref="${1:-HEAD}"
+                   case "${kind}" in
+                          tree )        fetch=  diffspec=;;
+                          base-head )   fetch=  diffspec="$(git -C "${NIXPKGS}" merge-base HEAD origin/master) HEAD";;
+                          base-master ) fetch=y diffspec="$(git -C "${NIXPKGS}" merge-base HEAD origin/master) origin/master";;
+                          to-master )   fetch=y diffspec="${ref} origin/master";;
+                          * ) fail "unknown diff kind '${kind}'.  Expected one of: tree, base-head, base-master, to-master";;
+                   esac
+                   test -z "${fetch}" ||
+                           git -C "${NIXPKGS}" fetch origin
+                   git -C "${NIXPKGS}" diff ${diffspec} ${GHC_CONFIG_FULL_PATH};;
+
 mentions | nixpkgs-mentions )
                    HELP "nixpkgs-mentions"       "Shell with current GHC" || return 0
-                   
+
                    git -C "${NIXPKGS}" fetch origin
                    git -C "${NIXPKGS}" log --grep "@${GITHUB_USER}" origin/master;;
 
@@ -3148,24 +3238,26 @@ esac
 #+begin_src sh
 while test $# -ge 1
 do case "$1"
-   in 
+   in
       --commit )           OP_COMMIT="$2"; shift;;
       --nixpkgs )          TARGET_NIXPKGS="--nixpkgs";;
-      --no-build )         OP_NO_BUILD="--no-build";;
+      -na | --no-apply )   OP_NO_APPLY="--no-apply";;
+      -n | --no-build )    OP_NO_BUILD="--no-build";;
+      -p | --preapply )    OP_PREAPPLY="--preapply";;
 
-      --cls )              echo -en "\ec";;
-      --quiet | -q )       NH_QUIET="--quiet";;
+      -c | --cls )         echo -en "\ec";;
+      -q | --quiet )       NH_QUIET="--quiet";;
 
       --full-trace )       set -x;;
       --trace )            set -x; NH_TRACING=true;;
-      --traceless | -t )   shift; "$0" --trace "$@" 2>&1 | less;;
+      -t | --traceless )   shift; "$0" --trace "$@" 2>&1 | less; exit ${PIPESTATUS[0]};;
       --debug )            enable_debug
                            # Unfortunately, this cannot work in general, because of the broken 'return 1' handling:
                            shopt -s extdebug
                            trap 'errexit' ERR # trap ERR to provide an error handler whenever a command exits nonzero this is a more verbose version of set -o errexit
                            set -o errtrace    # setting errtrace allows our ERR trap handler to be propagated to functions,  expansions and subshells
                            ;;
-      --help | -h )        $0 help;;
+      -h | --help )        $0 help;;
       --recurse )          NH_RECURSE="--recurse";;
       "--"* )              fail "$0: unknown option: $1";;
       * )                  break;;
@@ -3174,6 +3266,8 @@ do case "$1"
 done
 test -z "${NH_RECURSE}" ||
         echo "nh $*" >> ~/.nh_history
+test -z "${OP_PREAPPLY}" ||
+        nh apply
 #+END_SRC
 * Top level: sub dispatch
 
@@ -3183,17 +3277,17 @@ command_dispatch "$@"
 
 * Top level: Apply-Build-Commit (ABC) phase
 #+begin_src sh
-if   test -n                 "${OP_ATTR}"
-then apply                   "${OP_ATTR}";          OP_BUILD=true
-elif test -n                 "${OP_GLOBAL}"
-then apply;                                         OP_ACME=true
+if   test                 -n "${OP_ATTR}"   -a -z "${OP_NO_APPLY}"
+then apply                   "${OP_ATTR}";           OP_BUILD=true
+elif test                 -n "${OP_GLOBAL}" -a -z "${OP_NO_APPLY}"
+then apply;                                          OP_ACME=true
 fi
-if   test -n                 "${OP_BUILD}" -a -z "${OP_NO_BUILD}"
-then build --reuse-overrides "${OP_ATTR}"
-elif test -n                 "${OP_ACME}"  -a -z "${OP_NO_BUILD}"
+if   test                 -n "${OP_BUILD}"  -a -z "${OP_NO_BUILD}"
+then build --reuse-overrides --print-drv "${OP_ATTR}"
+elif test                 -n "${OP_ACME}"   -a -z "${OP_NO_BUILD}"
 then acme  --reuse-overrides
 fi
-if   test -n                 "${OP_COMMIT}" -a -n "${TARGET_NIXPKGS}"
+if   test                 -n "${OP_COMMIT}" -a -n "${TARGET_NIXPKGS}"
 then git -C "${NIXPKGS}" add ${GHC_CONFIG_FULL_PATH}
      git commit -m "ghc${GHC}${OP_ATTR:+ | ${OP_ATTR}}:  ${OP_COMMIT}"
 fi
