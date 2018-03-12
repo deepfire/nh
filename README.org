@@ -14,6 +14,8 @@
 
     : nh hackage    foo 1.2.14
     : nh hackage    foo                               # Pull the latest one
+    : nh upstream   bar
+    : nh upstream   bar ghc-8.4
     : nh unmerged   bar concerned-citizen PR-number
 
 *** Brutal, no-nonsense introduction
@@ -29,10 +31,9 @@
 
        : nh hackage lens                               # easy: there's a Hackage release, get the latest
 
-       : nh set-upstream microlens-th aelve
+       : nh import       microlens-th                  # import metadata for microlens-th from Hackage cabal file
        : nh upstream     microlens-th master           # Fetch the tip of upstream's master (any refspec goes)
-       : nh set-repoName microlens-th microlens        # A single repository carries several packages.
-       : nh chdir        microlens-th microlens-th
+       : nh chdir        microlens-th microlens-th     # -- in case the Cabal metadata was wrong
        : nh set-issue    microlens-th 222              # Specify the relevant upstream issue ID
 
        : nh set-upstream hedgehog hedgehogqa
@@ -47,30 +48,29 @@
        ..and you always can generate =overrides.nix= from the very latest package
        database -- although it happens transparently most of the time:
 
-       : nh overrides [--disable-ghc-configuration]
+       : nh apply
+       : nh override  lens                             # ..to see the individual override
 
        The =--disable-ghc-configuration= switch will position your override set as
        a /replacement/ to the global, version-specific GHC configuration.
 
-       You can also choose to set this GHC configuration instead of local
-       =overrides.nix=.  This will also helpfully empty/neuter =overrides.nix=:
-
-       : nh ghc-configuration
+       If you set =TARGET_NIXPKGS= in the =.nh= configuration file to a non-empty
+       value, =nh= will emit non-local overrides directly into the Nixpkgs GHC
+       configuration for the selected GHC version.
 
     4. Validate if the overridden packages build now:
 
-       : nh baseline [NAME..]                          # Defaults to building everything, stepwise
-       : nh build NAME                                 # ..as an alternative.
+       : nh acme                                       # Build all defined overrides
+       : nh build NAME..                               # ..as an alternative.
 
-       ..or..
+       ..and..
 
-       : nh acme                                       # Build everything in parallel
-       : nh progress                                   # ..and watch progress in another terminal
+       : nh progress                                   # ..to watch progress in another terminal
 
     5. See what the audit tool thinks about the situation:
 
-       : nh audit --skip-baseline [NAME..]             # Defaults to everything, once more
-                                                       # --skip-baseline, because we already did that part.
+       : nh audit --skip-acme [NAME..]                 # Defaults to everything, once more
+                                                       # --skip-acme, because we already did that part.
 
        It should complain, at the very least because the =trim= part was not run,
        and so there's no proof that any of the overrides are necessary.
@@ -80,14 +80,14 @@
 
     6. Let's try trimming the set:
 
-       : nh trim --skip-baseline [NAME..]
+       : nh trim [NAME..]
 
        That would take a while, and also it won't do anything to the recorded
        overrides -- it merely collected information, as an intermediate step.
 
        Let's execute on that information, then:
 
-       : nh execute-trim
+       : nh execute-trims
 
     7. Audit again:
 
@@ -99,7 +99,7 @@
        can record the manually-collected information in the database (which would
        prevent trimming of this override in the future):
 
-       : nh set-explanation broken-attribute doCheck
+       : nh set-explanation broken-attribute doCheck "....."
 
        Rinse, repeat -- and remember that individual attributes can be rebuilt
        using =nh baseline= or =nh build=.
@@ -152,14 +152,15 @@
 
     3. The major package DB operations that =nh= provides are:
 
-       - baseline :: Build every attribute in the override set.
+       - acme     :: Build every attribute in the override set using a proxy,
+                     that depends on everything overridden (really, acme).
        - trim     :: Try to remove overrides, one by one, and record the results
                      of those attempts in the package DB -- trying to deducing
                      whether these overrides are necessary.  It is a heuristic.
-       - execute-trim :: Modify the package DB in accordance with the /trim/ step.
-                         This effectively removes any overrides that weren't found
-                         necessary.  This is also error-prone (more things are
-                         sometimes removed than is feasible).
+       - execute-trims :: Modify the package DB in accordance with the /trim/ step.
+                          This effectively removes any overrides that weren't found
+                          necessary.  This is also error-prone (more things are
+                          sometimes removed than is feasible).
        - audit    :: Verify every attribute against a set of status-dependent
                      invariants, that ensure:
          - the override necessity (along with the existence of proof), and
@@ -189,8 +190,7 @@ $ nh jailbreak deepseq-generics
 $ nh set-explanation deepseq-generics jailbreak
 deepseq-generics.def/meta.jailbreak.explanation: https://github.com/haskell-hvr/deepseq-generics/pull/4
 
-$ nh set-repoName securemem hs-securemem
-$ nh set-upstream securemem vincenthz
+$ nh import securemem  # this fetches metadata like repoName, upstream, chdir etc.
 
 $ nh unmerged securemem shlevy 12 6168d90b00bfc6a559d3b9160732343644ef60fb
 - 06dhx1z44j5gshpdlsb4aryr3g4was3x4c2sgv1px8j57zrvlypx
