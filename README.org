@@ -208,17 +208,11 @@ $ nh unmerged securemem shlevy 12 6168d90b00bfc6a559d3b9160732343644ef60fb
 * Appendix: help
 
 #+BEGIN_SRC
-sage:  nh [--cls] [--nixpkgs] [--trace] [--debug] [--quiet] SUBCMD [SUBARGS..]
+Usage:  nh [--cls] [--nixpkgs] [--trace] [--debug] [--quiet] SUBCMD [SUBARGS..]
 
 NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
        for /home/deepfire/nixpkgs/pkgs/development/haskell-modules/configuration-ghc-8.4.x.nix
 
-
-  General:
-
-   ls [REGEX]                List all overridden attributes
-   info ATTR                 Overview of an attribute's PKGDB
-   overview [ATTR..]         List overridden attributes, grouped by status + relevant info
 
   PKGDB:
 
@@ -233,7 +227,11 @@ NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
    edit-meta ATTR META       Edit the current attribute's meta value using readline
    disable ATTR[.OVER]       Disable all/single overrides for an attribute
    enable ATTR[.OVER]        Re-enable previously disabled overrides
-   set-explanation ATTR OVER Provide a manual explanation for an override's existence
+   with-disabled-attrs ATTR..
+                             Disable all listed attribute overrides and pause;  Re-enable on exit or newline in stdin
+   ls-disabled               List all disabled attributes
+   set-explanation ATTR OVER VAL
+                             Manually supply explanation for an override's existence
    set-erdeps ATTR 'ATTR..'  Set attribute's essential rev-deps that must keep working
    chdir ATTR SUBDIR         Change directory before build;  "" removes the override
    local ATTR                Mark ATTR as local: not subject for Nixpkgs GHC configuration
@@ -247,6 +245,8 @@ NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
    get ATTR OVER             Get an attribute's override value
    set ATTR OVER VAL         Set an attribute's override value;  "" removes the override
    edit ATTR OVER            Edit the current attribute's value using readline
+   set-input-over ATTR INPUT VAL
+                             Set ATTR's override for INPUT
    edit ATTR OVER            Edit the current attribute's value using readline
    check ATTR                Disable an existing dontCheck override
    dontCheck ATTR            Disable tests
@@ -254,8 +254,9 @@ NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
    dontHaddock ATTR          Disable Haddock generation
    jailbreak ATTR            Turn on jailbreaking
    dontJailbreak ATTR        Disable an existing jailbreak override
-   libraryHaskell ATTR [ATTR..]
-                             Specify extra libraryHaskellDepends;  "" removes the override
+   {library,executable,test}Haskell ATTR [ATTR..]
+                             Specify extra *HaskellDepends;  "" removes the override
+   add-patch ATTR SHA256 URL Add a patch to ATTR
 
   Status:
 
@@ -286,14 +287,33 @@ NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
                              Store .drv references for a Nix-stored .drv file
    deriver-of STORE-PATH     Store .drv for a Nix store path.  Will fail if built non-locally
 
-  Cabal-related:
+  PKGDB emission to Nix overrides:
+
+   over | override | show-override ATTR
+                             Print the attribute's override defined by PKGDB
+   apply [--reuse-cache]     Apply all overrides via /home/deepfire/overrides.nix
+   cache [--require-descs]   Regenerate override cache
+   show-cache ATTR           Print the cached text of attribute's override (DEBUG)
+
+  General:
+
+   ls [REGEX]                List all overridden attributes
+   info ATTR                 Overview of an attribute's PKGDB
+   overview [ATTR..]         List overridden attributes, grouped by status + relevant info
+
+  Hackage:
 
    import ATTR               Scrape ATTR's Cabal file from Hackage for some properties
    cabal ATTR                Print the latest released cabal file for ATTR
+   hackage ATTR [RELEASE=upstream-latest]
+                             Override to a Hackage release
 
-  Github-based overrides:
+  Github:
 
    github ATTR [REF]         Override ATTR to its latest upstream Github commit
+   unmerged ATTR USER PR# [REV=HEAD]
+                             Override to a 3rd-party Github commit
+   upstream ATTR [REV=HEAD]  Override to an upstream Github commit
    set-upstream ATTR GITHUB-USER
                              Specify an attribute's Github upstream username
    edit-upstream ATTR        Edit an attribute's Github upstream username
@@ -302,16 +322,11 @@ NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
    set-repoName ATTR REPO    Set an attribute's Github repository name
    edit-repoName ATTR        Edit an attribute's Github repository name
 
-  Override manipulation (high-level):
-
-   hackage ATTR [RELEASE=upstream-latest]
-                             Override to a Hackage release
-   unmerged ATTR USER PR# [REV=HEAD]
-                             Override to a 3rd-party Github commit
-   upstream ATTR [REV=HEAD]  Override to an upstream Github commit
-
   Build & results:
 
+   instantiate [--reuse-cache] [ATTR..]
+                             Instantiate overridden attrs (or specified subset)
+   acme [--reuse-cache]      Build everything at once, collecting all failures
    build [COMMON-OPTS] ATTR  Build a single attribute with current overrides
    log ATTR [OVER=baseline]  Obtain trim build logs for a single override
    failure ATTR [OVER=baseline]
@@ -324,36 +339,43 @@ NOTE:  if --nixpkgs is passed, non-local overrides instead serve as definition
 
   Override database maintenance:
 
-   instantiate [--reuse-cache] [ATTR..]
-                             Instantiate overridden attrs (or specified subset)
-   acme [--reuse-cache]      Build everything at once, collecting all failures
-   baseline [--reuse-{overrides,cache}] [ATTR..]
-                             Build overridden attrs (or specified subset)
    trim [--reuse-cache] [ATTR..]
                              Suggest a reduction to the override set (or specified subset)
    trim-override ATTR OVER   Attempt trimming a specific override of a given attribute
    show-trims                Show the trim suggestion
    execute-trims             Execute the suggestion
-   audit [--autofix] [--autoonly] [--skip-baseline] [--reuse-{overrides,cache}] [ATTR..]
+   audit [--autofix] [--autoonly] [--skip-acme] [--reuse-{overrides,cache}] [ATTR..]
                              Sanity check the overridden attrs (or specified subset).  --autofix applies suggestions
    extra-validation-attributes
                              Edit the set of attributes validated regardless of being overridden
+   edit-fixed-content        Edit the static part of the GHC configuration
 
-  Generation of overrides:
+  Nix shell:
 
-   over | override | show-override ATTR
-                             Print the attribute's override defined by PKGDB
-   apply [--reuse-cache]     Apply all overrides via /home/deepfire/overrides.nix
-   cache [--require-descs]   Regenerate override cache
-   show-cache ATTR           Print the cached text of attribute's override (DEBUG)
+   shell                     Nix shell with up-to-date overrides (shell.nix required)
+   shell-for ATTR            Nix shell for building ATTR
+   cabal-shell               Nix shell from a cabal file (nothing else required)
+   clone-upstream-fixer-shell
+                             Nix shell from a cabal file (nothing else required)
+   try-fix ATTR              Push the current commit and try the fix
+   find-module NAME          Convenience alias for 'ghc-pkg find-module NAME'
+   list-packages ...         Convenience alias for 'ghc-pkg list ...
+   describe-package ATTR     Convenience alias for 'ghc-pkg describe ATTR
+   package-modules ATTR      List ATTR's exposed modules
+   phases ATTR               Print ATTR's build phases
 
   Miscellanea:
 
    eval BASH-EXPR            Passthrough, to execute anything defined.
    loop-hunter               Detect attribute loops:  nix-shell 2>&1 | nh loop-hunter
-   progress                  Live summary of new, complete and failing builds
+   ls-builds                 List active builds
+   progress [LOG]            Live summary of new, complete and failing builds
    watch                     Observe the current build, as it hits the logs..
    ghc                       Shell with current GHC
    prefetch-ghc GITREV       Prefetch a GHC revision
+   less-ghc-config [NEEDLE]  Run less on the Nixpkgs GHC configuration
+   git OPTIONS.. ARGS..      Run git inside controlled Nixpkgs
+   nixpkgs-diff [(base-head|base-master|head-master] [REF]
+                             Diff of current GHC configuration
 
 #+END_SRC
