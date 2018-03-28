@@ -14,7 +14,7 @@ let
             drv
             (old: {
               libraryHaskellDepends =
-                [ pkgs.cabal-install ];
+                [ ghc.cabal-install ];
              });
 in
   drv'.env
