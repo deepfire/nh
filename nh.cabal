@@ -19,6 +19,7 @@ library
                      , NH.FS
                      , NH.Github
                      , NH.Misc
+                     , NH.Nix
                      , NH.PKGDB
                      , NH.Projection
                      , NH.Types
@@ -30,10 +31,15 @@ library
                      , Cabal
                      , cabal2nix
                      , containers
+                     , control-bool
                      , data-default-class
+                     , data-fix
                      , directory
                      , distribution-nixpkgs
                      , filepath
+                     , github
+                     , generics-sop
+                     , hashable
                      , hnix
                      , hourglass
                      , language-nix
@@ -41,12 +47,16 @@ library
                      , optparse-applicative
                      , parsers
                      , pretty
+                     , protolude
+                     , protolude
                      , req
                      , semigroups
                      , temporary
                      , text
                      , text-format
                      , trifecta
+                     , turtle
+                     , unordered-containers
 
 executable nha
   hs-source-dirs:      .
@@ -59,8 +69,12 @@ executable nha
                      , Cabal
                      , cabal2nix
                      , containers
+                     , control-bool
                      , data-default-class
                      , distribution-nixpkgs
+                     , generics-sop
+                     , github
+                     , hashable
                      , hnix
                      , hourglass
                      , language-nix
@@ -68,7 +82,10 @@ executable nha
                      , nh
                      , optparse-applicative
                      , pretty
+                     , protolude
                      , req
                      , temporary
                      , text
                      , text-format
+                     , turtle
+                     , unordered-containers
