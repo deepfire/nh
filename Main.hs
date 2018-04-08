@@ -9,6 +9,7 @@ module Main
 where
 
 import           Control.Monad                       (forM_, unless)
+import           Control.Monad.Plus                  (partial)
 import           Control.Monad.IO.Class
 
 import qualified Data.Aeson                       as AE
@@ -63,11 +64,11 @@ import Distribution.Nixpkgs.Fetch
 import Distribution.Nixpkgs.Haskell
 import Distribution.Nixpkgs.Haskell.BuildInfo
 import Distribution.Nixpkgs.Haskell.FromCabal
-import Distribution.Nixpkgs.Haskell.FromCabal.Normalize ( normalizeCabalFlags )
 import Distribution.Nixpkgs.Haskell.FromCabal.Flags
 import qualified Distribution.Nixpkgs.Haskell.FromCabal.PostProcess as PP (pkg)
 import qualified Distribution.Nixpkgs.Haskell.Hackage as DB
-import Distribution.Nixpkgs.Haskell.PackageSourceSpec
+import qualified Distribution.Nixpkgs.Haskell.PackageSourceSpec as Nixpkgs
+import Distribution.Nixpkgs.Haskell.PackageSourceSpec hiding (Package)
 import Distribution.Nixpkgs.Meta
 import Distribution.PackageDescription ( mkFlagName, FlagAssignment, FlagName, unFlagName, unFlagAssignment, mkFlagAssignment )
 import Distribution.Package ( packageId, packageName, packageVersion )
@@ -86,30 +87,35 @@ import Text.PrettyPrint.HughesPJClass ( Doc, Pretty(..), text, vcat, hcat, semi 
 
 import           NH.Config                             (Config(..))
 import qualified NH.Config                          as CFG
+import           NH.Derivation
+import           NH.Emission
+import           NH.Misc
+import           NH.Nix
+import           NH.PKGDB                              (PKGDB(PKGDB))
 import qualified NH.PKGDB                           as PKGDB
-import qualified NH.Projection                      as Proj
 import           NH.Types
 
-
--- * Cabal2nix
-(//) ∷ T.Text → T.Text → T.Text
-x // y = x<>"/"<>y
-
-attrC2NUrl ∷ SrcSpec → URL
-attrC2NUrl  (SSGithub attr user repo ref msub) = URL $ "https://github.com"//fromUser user//fromRepo repo
-attrC2NUrl (SSHackage attr msub)               = URL $ "cabal://"<>fromAttr attr
+import           NH.MRecord
+import qualified NH.PKGDB                           as P
+import           NH.PKGDB                       hiding (parse, path)
 
 
 data Cmd
-  = GetPackage        SrcSpec
-  | EmitExtraDefn     (Maybe Attr)
-  | Stub
+  = DumpConfig
+  | InternDef     SrcSpec
+  | EmitDef      (Maybe Attr)
   deriving (Show)
 
 data Options = Options
   { oCompiler  ∷ CompilerId
   , oSystem    ∷ Platform
-  }
+  } deriving Show
+
+instance Semigroup Options where
+  _ <> r = r
+instance Monoid Options where
+  mempty = Options { oCompiler = buildCompilerId
+                   , oSystem   = buildPlatform }
 
 optionsParser ∷ O.Parser Options
 optionsParser = Options
@@ -131,149 +137,105 @@ parsePlatform = do arch <- P.choice [P.string "i686" >> return I386, P.string "x
 
 commandParser ∷ O.Parser Cmd
 commandParser = subparser
-  ( command "get-package"
-    (flip info (progDesc "Obtain properties of Cabal package ATTR")
-      (GetPackage
+  ( command "dump-config"
+    (flip info (progDesc "Dump the configuration")
+      (pure DumpConfig
+       <**> helper))
+ <> command "intern-definition"
+    (flip info (progDesc "Intern a Cabal package from Hackage/Github")
+      (InternDef
        <$> subparser
-        (  command "hackage" (flip info (progDesc "Obtain properties of Cabal package ATTR")
-                               (SSHackage
-                                 <$> argument str (metavar "ATTR")
-                                 <*> optional (argument str (metavar "SUBDIR"))))
-        <> command "github"  (flip info (progDesc "Obtain properties of Cabal package ATTR")
-                               (SSGithub
-                                 <$> argument str (metavar "ATTR")
-                                 <*> argument str (metavar "USER")
-                                 <*> argument str (metavar "REPO")
-                                 <*> optional (argument str (metavar "SUBDIR"))
-                                 <*> (fromMaybe "master" <$> optional (argument str (metavar "GITREF"))))))))
- <> command "emit-extra-defn"
-    (flip info (progDesc "Emit an extra definition")
-      (EmitExtraDefn
-       <$> optional (argument str (metavar "ATTR"))))
- <> command "commit"
-    (flip info (progDesc "Record changes to the repository")
-      (pure Stub))
+        (  command "hackage"
+           (flip info (progDesc "Obtain properties of a Hackage package ATTR")
+             (SSHackage
+               <$> argument str (metavar "ATTR")
+               <*> optional (argument str (metavar "SUBDIR"))
+               <**> helper))
+        <> command "github"
+           (flip info (progDesc "Obtain properties of a Github package")
+             (SSGithub
+               <$> argument str (metavar "ATTR")
+               <*> argument str (metavar "USER")
+               <*> argument str (metavar "REPO")
+               <*> optional (argument str (metavar "SUBDIR"))
+               <*> (fromMaybe "master" <$> optional (argument str (metavar "GITREF")))
+               <**> helper)))
+       <**> helper))
+ <> command "emit-definition"
+    (flip info (progDesc "Emit a full package definition (as previously interned)")
+      (EmitDef
+       <$> optional (argument str (metavar "ATTR"))
+       <**> helper))
   )
 
 
+
 main ∷ IO ()
 main = do
+  (,) options command ← execParser $
+    info ((,) <$> optionsParser <*> commandParser
+          <**> helper) $
+    fullDesc <> progDesc "Perform advanced queries for nh"
+             <> header   "nh - Nix Haskell tooling"
+  withFull $ execute options command
+
+withFull ∷ (Config → PKGDB → IO a) → IO a
+withFull action = do
   cfPath ← CFG.findConfig
   -- putStrLn $ unpack $ "Found config at:  " <> cfPath
   cfg@Config{..} ← CFG.readConfigOldStyle cfPath
-  db@PKGDB.PKGDB{..} ← PKGDB.open _cPKGDB <&>
+  db@PKGDB{..} ← PKGDB.open _cPKGDB <&>
     fromMaybe (error $ printf "Config %s specifies malformed PKGDB at:  %s" cfPath _cPKGDB)
-  (,) options command ← execParser $
-    info (((,) <$> optionsParser <*> commandParser) <**> helper)
-    (fullDesc
-     <> progDesc "Perform advanced queries for nh"
-     <> header "nh - Nix Haskell tooling" )
-  execute options db command
+  action cfg db
 
 
-execute ∷ Options → PKGDB.PKGDB → Cmd → IO ()
-execute opts db (GetPackage sspec) = do
-  drv ← getDerivation opts sspec
-  let extradef = internDerivation drv sspec
-  -- print extradef
-  PKGDB.writeExtraDefn db extradef
-  extradef' ← PKGDB.readExtraDefn db (ssAttr sspec)
-  unless (extradef ≡ extradef') $ do
-    putStrLn "FATAL: extra definition roundtrip error:"
-    putStrLn "  --- 1. Just imported:"
-    print $ pPrint extradef
-    putStrLn "  --- 2. After round-trip via PKGDB:"
-    print $ pPrint extradef'
-execute opts db (EmitExtraDefn mattr) = do
+
+run ∷ Cmd → IO ()
+run = withFull ∘ execute mempty
+
+with ∷ (PKGDB → IO a) → IO a
+with action = withFull $ const action
+
+
+type CmdRunner = Options → Cmd → Config → PKGDB → IO ()
+execute ∷ CmdRunner
+execute opts DumpConfig cfg@Config{..} PKGDB{..} = do
+  print cfg
+  print opts
+  echoT $ "Config at: " <> _cConfig
+  echoT $ "PKGDB at:  " <> pkgdbPath
+execute opts@Options{..} (InternDef sspec) cfg db = do
+  drv ← getDerivation oCompiler oSystem sspec
+  let pk = internDerivation drv sspec
+  store (db, fromAttr $ ssAttr sspec) pk
+  pk' ← recover (db, fromAttr $ ssAttr sspec)
+  -- print pk
+  -- putStrLn "-------------------------------"
+  -- print pk'
+  -- putStrLn "==============================="
+  unless (pk ≡ pk') $ do
+    putStrLn "FATAL: package roundtrip error:"
+    let pp  = pPrint pk
+        pp' = pPrint pk'
+    if (show pp ≢ show pp')
+    then do
+      putStrLn "  --- 1. Just imported:"
+      print $ pp
+      putStrLn "  --- 2. After round-trip via PKGDB:"
+      print $ pp'
+    else do
+      putStrLn "  --- 1. Just imported:"
+      print $ pkMeta pk
+      putStrLn "  --- 2. After round-trip via PKGDB:"
+      print $ pkMeta pk'
+execute opts (EmitDef mattr) cfg db = do
   attrs ← case mattr of
             Just attr → pure $ Set.singleton attr
-            Nothing   → PKGDB.listExtraDefs db
+            Nothing   → PKGDB.readFulldefnNames db -- XXX: switch to status-based set construction
   forM_ attrs $
     \attr→ do
-      extradef ← PKGDB.readExtraDefn db attr
+      pk ∷ Package ← recover (db, fromAttr attr)
       print $ nest 2 $ vcat
         [ text (unpack $ fromAttr attr) <+> equals
-        , pPrint extradef <> semi ]
-      -- print $ text (unpack $ fromAttr attr) <+> equals <+> pPrint extradef
-
-
-internDerivation ∷ Derivation → SrcSpec → ExtraDefn
-internDerivation drv sspec =
-  let SSGithub{..} = case sspec of
-                       x@SSGithub{..} → x
-                       _ → error "Non-Github imports not supported."
-      drvActiveFields    = Proj.piecewiseDerivation drv
-      edAttr             = ssAttr
-      meRepoName         = if fromRepo ssRepo ≢ fromAttr ssAttr
-                           then Just ssRepo
-                           else Nothing
-      meDisable          = KeepOverride
-      meChdir            = if Proj.fieldActive drv DFsubpath
-                           then Just (T.pack $ drv^.subpath) else Nothing
-      meEssentialRevDeps = []      -- initially not tracked
-      meAttrName         = Nothing -- only applies to versioned Nixpkgs attrs
-      edMeta             = Meta{..}
-      ghRepoName         = ssRepo
-      ghUpstream         = ssUser
-      ghUser             = Nothing -- XXX: assumption
-      ghGitRef           = GitRef $ pack $ derivRevision $ drv^.src
-      ghNixHash          = NixHash $ pack $ derivHash $ drv^.src
-      ghPR               = Nothing
-      ghIssue            = Nothing
-      ghTimestamp        = Nothing -- XXX: loss
-      edGithub           = Github{..}
-      edDrvFields        = Map.fromList $ flip filter drvActiveFields $
-        \(k, _)→ not $ Set.member k Proj.drvNonPassthroughFields
-  in ExtraDefn{..}
-
-
-getDerivation ∷ Options → SrcSpec → IO Derivation
-getDerivation Options{..} sspec = do
-  let optHpack           = False
-      optHackageDb       = Nothing
-      optHackageSnapshot = Nothing
-      optUrl             = T.unpack $ fromURL $ attrC2NUrl sspec
-      optRevision        = Nothing
-      optSha256          = Nothing
-      optSubpath         = T.unpack ∘ fromDir <$> ssDir sspec
-      optSystem          = oSystem
-      optCompiler        = oCompiler
-      optExtraArgs       = []
-      opts               = ImportOptions{..}
-  package ← getPackage optHpack optHackageDb optHackageSnapshot $
-            Source optUrl (fromMaybe "" optRevision) (maybe UnknownHash Guess optSha256) (fromMaybe "" optSubpath)
-  pure $ packageDerivation opts package
-
-data ImportOptions = ImportOptions
-  { optCompiler    ∷ CompilerId
-  , optSystem      ∷ Platform
-  , optSubpath     ∷ Maybe FilePath
-  , optExtraArgs   ∷ [String]
-  }
-
-packageDerivation ∷ ImportOptions → Package → Derivation
-packageDerivation ImportOptions{..} pkg = do
-  let
-      withHpackOverrides :: Derivation -> Derivation
-      withHpackOverrides = if pkgRanHpack pkg then hpackOverrides else id
-
-      hpackOverrides :: Derivation -> Derivation
-      hpackOverrides = over phaseOverrides (<> "preConfigure = \"hpack\";")
-                       . set (libraryDepends . tool . contains (PP.pkg "hpack")) True
-
-      flags :: FlagAssignment
-      flags = normalizeCabalFlags $
-                configureCabalFlags (packageId (pkgCabal pkg))
-
-      deriv :: Derivation
-      deriv = withHpackOverrides $ fromGenericPackageDescription (const True)
-                                            (\i -> Just (binding # (i, path # [i])))
-                                            optSystem
-                                            (unknownCompilerInfo optCompiler NoAbiTag)
-                                            flags
-                                            []
-                                            (pkgCabal pkg)
-              & src .~ pkgSource pkg
-              & subpath .~ fromMaybe "." optSubpath
-              & extraFunctionArgs %~ Set.union (Set.fromList ("inherit stdenv":map (fromString . ("inherit " ++)) optExtraArgs))
-  deriv
+        , pPrint pk <> semi ]
+      -- print $ text (unpack $ fromAttr attr) <+> equals <+> pPrint fulldef

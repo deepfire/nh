@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -33,21 +34,18 @@ acmeAttr ∷ Attr
 acmeAttr = "nh-acme-grand-total-attribute"
 
 configName ∷ Text
-configName = ".nh"
-
-
--- * Flags
-data TargetNixpkgs         = TargetNixpkgs         | TargetLocal     deriving (Bounded, Eq, Ord, Show); instance Flag TargetNixpkgs
+configName = ".nh2"
 
 
 data Config = Config
-  { _cGHCVer             ∷ GHCVer
+  { _cConfig             ∷ Text
+  , _cGHCVer             ∷ GHCVer
   , _cGHCConfig          ∷ Text
   , _cGHCOverrides       ∷ Text
   , _cGHCPackages        ∷ Text
   , _cPKGDB              ∷ Text
   , _cGithubUser         ∷ GithubUser
-  , _cTargetNixpkgs      ∷ TargetNixpkgs
+  , _cTargetNixpkgs      ∷ Flag Local
   } deriving (Show)
 makeLenses 'Config
 
@@ -56,7 +54,8 @@ instance Semigroup Config where
 
 instance Monoid Config where
   mempty = Config
-    { _cGHCVer           = "841"
+    { _cConfig           = ".nh2"
+    , _cGHCVer           = "841"
     , _cGHCConfig        = "configuration-ghc-8.4.x.nix"
     , _cGHCOverrides     = "overrides.nix"
     , _cGHCPackages      = "packages.nix"
@@ -80,8 +79,9 @@ readConfigOldStyle path = do
       -- XXX: the following is a bit too silent
       setSingleField smth                  x v = x -- flip trace x $ "Ignoring config field: " <> T.unpack smth
   pure $ foldl (\cfg (k,v)→ setSingleField k cfg v) mempty kvs
-       & cGHCOverrides .~ (pack $ Sys.takeDirectory $ unpack $ path </> "overrides.nix")
-       & cGHCPackages  .~ (pack $ Sys.takeDirectory $ unpack $ path </> "packages.nix")
+       & cConfig       .~ path
+       & cGHCOverrides .~ pack (Sys.takeDirectory $ unpack path) </> "overrides.nix"
+       & cGHCPackages  .~ pack (Sys.takeDirectory $ unpack path) </> "packages.nix"
 
 readShellAssignment ∷ (Monad p, P.TokenParsing p) ⇒ p (T.Text, T.Text)
 readShellAssignment = do
@@ -89,7 +89,7 @@ readShellAssignment = do
   key ← P.some $ P.alphaNum <|> P.oneOf "_."
   P.char '='
   P.optional $ P.char '"'
-  val ← P.some $ P.noneOf "\"\t\n\r"
+  val ← P.many $ P.noneOf "\"\t\n\r"
   P.optional $ P.char '"'
   pure (T.pack key, T.pack val)
 

@@ -1,87 +1,276 @@
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PackageImports #-}
+{-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeInType #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UnicodeSyntax #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
+{-# LANGUAGE ViewPatterns #-}
 module NH.PKGDB
 where
 
+import           Control.Exception
 import           Control.Lens                        ((<&>))
-import           Control.Monad                       (foldM, forM_)
-import           Data.Hourglass                      (Seconds(..))
-import           Data.Hourglass.Epoch                (ElapsedSince(..))
+import           Control.Monad                       (foldM, forM, forM_, join, liftM, when)
+import           Data.Coerce                         (Coercible, coerce)
+import           Data.Functor.Identity
 import           Data.Function                       ((&))
+import           Data.Hourglass                      (Seconds(..))
+import           Data.Hourglass.Epoch
 import qualified Data.List                        as L
 import           Data.Map                            (Map)
 import qualified Data.Map                         as Map
 import           Data.Maybe
 import           Data.Set                            (Set)
 import qualified Data.Set                         as Set
-import           Data.Text                           (Text, pack, unpack)
+import           Data.Text                           (Text, pack, unpack, toLower, toUpper, drop, take, length, isSuffixOf, isPrefixOf)
 import qualified Data.Text                        as T
 import qualified Data.Text.IO                     as Sys
-import           Prelude                      hiding (read)
+import qualified GHC.Types                        as Type
+import           Prelude                      hiding (read, take, drop, length)
+import qualified Prelude                          as P
 import           Prelude.Unicode
 import qualified System.Directory                 as Sys
+import qualified System.IO.Temp                   as Sys
 import qualified System.FilePath                  as Sys
 import           Text.Printf
+
+import           Data.Proxy
+import           GHC.Generics                        (Generic)
+import qualified GHC.Generics                     as GHC
+import           Generics.SOP                        (Rep, NS(..), NP(..), SOP(..), POP(..), I(..), K(..), Code, All, All2
+                                                     ,HasDatatypeInfo(..), DatatypeInfo(..), FieldName(..), FieldInfo(..), ConstructorInfo(..), SListI
+                                                     ,from, to, hcollapse, hcliftA2, hliftA, hcliftA, unI, hsequence, hcpure, hpure)
+import qualified Generics.SOP                     as SOP
 
 import           Language.Nix.PrettyPrinting  hiding ((<>), empty, Text)
 import           Text.PrettyPrint.HughesPJClass      ( Doc, Pretty(..), Style(..), Mode(..)
                                                      , renderStyle, fsep, text, sep, fsep, lbrack, rbrack, lbrace, rbrace, empty
                                                      , vcat, nest, doubleQuotes, (<+>), semi)
 import qualified Text.Read                        as R
+import qualified Debug.Trace                      as DBG
 
 import           NH.Types
 import           NH.Config
+import           NH.Derivation                    as Drv
 import           NH.FS
-import qualified NH.Projection                    as Proj -- XXX: wacky dep
 import           NH.Misc
+import           NH.MRecord
+import           NH.Nix
 
 
 
 data PKGDB = PKGDB
-  { pkgdbPath ∷ Text
+  { pkgdbPath    ∷ Text
+  , pkgdbNixpkgs ∷ Nixpkgs
   }
+
+cnDrvMeta,        cnGRepo, cnGithub, cnHackage, cnMeta, cnOver,      cnPkg ∷ CName
+allCNames@[cnDrvMeta, cnGRepo, cnGithub, cnHackage, cnMeta, cnOver, cnPkg] = CName <$>
+  ["DrvMeta", "GithubRepo", "Github", "Hackage", "Meta", "Overrides", "Package"]
+
+type Ctx = (PKGDB, EName)
+
+instance RecordCtx Ctx where
+  type ConsCtx     Ctx = CName
+  errCtxDesc  (_,  en) cn (Field fi) = T.pack $
+    printf "%s:%s:%s" (unpack en) (unpack fi) (unpack $ fromCName cn)
+  listFields  (db, en) cn            = (Field <$>) <$> listCtx cn (CtxName en) db
+  dropField   (db, en) cn (Field fi) =
+    rm cn (CtxName en) (Field fi) db
+  nameMap = const
+    [("nixHash", "hash")]
+
+instance {-# OVERLAPPABLE #-} (SOP.Generic a, SOP.HasDatatypeInfo a) ⇒ Record Ctx a where
+  prefixChars _ _ = 2; consCtx _ _ n _ = n
+instance Record Ctx Src        where
+  prefixChars _ _ = 2
+  consCtx _ _ n _ = n
+  saveChoice (db, en)  Github{..} = write' db  cnOver (CtxName en) "src" (Just "github")
+  saveChoice (db, en) Hackage{..} = write' db  cnOver (CtxName en) "src" (Just "hackage")
+  restoreChoice ctx _ = do
+    msrc ∷ Maybe Text ← restoreField ctx cnOver "src"
+    pure $ case msrc of
+      Just "hackage" → 0 --     Z ∘ K $ ()
+      Just "github"  → 1 -- S ∘ Z ∘ K $ ()
+      Nothing → fieldError ctx cnOver "src" "'src' field ⊥: cannot choose between alternatives"
+instance ReadField  Ctx DrvMeta
+instance ReadField  Ctx GithubRepo
+instance ReadField  Ctx Meta
+instance ReadField  Ctx Overrides
+instance ReadField  Ctx Package
+instance ReadField  Ctx Src
+instance WriteField Ctx DrvMeta
+instance WriteField Ctx GithubRepo
+instance WriteField Ctx Meta
+instance WriteField Ctx Overrides
+instance WriteField Ctx Package
+instance WriteField Ctx Src
+
+instance ReadField  Ctx (ElapsedSince UnixEpoch) where readField  d c f =  readField d c f <&> (P.read ∘ unpack <$>)
+instance WriteField Ctx (ElapsedSince UnixEpoch) where writeField d c f = writeField d c f ∘ pack ∘ show
+
+instance WriteField Ctx DFValue where writeField d c f = writeField d c f ∘ showDocOneLine ∘ dfDoc
+
+
+-- * Basis for DB access:  writes are fake, reads are real
+
+writeText ∷ (PKGDB, EName) → CName → Field → Text → IO ()
+writeText (db, en) cn fi x = write' db cn (CtxName en) fi $ Just x
+
+instance WriteField Ctx Text where
+  writeField = writeText
+instance  ReadField Ctx Text where
+  readField (db,en) cn = read' db cn (CtxName en)
+
+
+
+writeTextly ∷ Coercible a Text ⇒ Ctx → CName → Field → a → IO ()
+writeTextly ctx cn fi = writeText ctx cn fi ∘ coerce
+
+readTextly  ∷ Coercible a Text ⇒ Ctx → CName → Field → IO (Maybe a)
+readTextly (db,en) cn = coerce <$> read' db cn (CtxName en)
+
+instance {-# OVERLAPPABLE #-} Coercible a Text ⇒ WriteField Ctx a where
+  writeField = writeTextly
+
+instance {-# OVERLAPPABLE #-} Coercible a Text ⇒  ReadField Ctx a where
+  readField  = readTextly
+
+
+
+instance (Coercible a Text) ⇒ WriteField Ctx [a] where
+  writeField ctx cn fi [] = dropField ctx cn fi
+  writeField ctx cn fi xs = writeText ctx cn fi $ T.intercalate " " $ coerce <$> xs
+
+instance (Coercible a Text) ⇒  ReadField Ctx [a] where
+  readField (db, en) cn fi = read' db cn (CtxName en) fi <&>
+    (defineMaybe [] ∘ (<&> (<&> coerce) ∘ readNames))
+
+
+
+instance CFlag a ⇒ WriteField Ctx (Flag a) where
+  writeField ctx cn fi x = storeField ctx cn fi $
+    if x ≡ enabled
+    then Just ("true" ∷ Text)
+    else Nothing
+
+instance CFlag a ⇒  ReadField Ctx (Flag a) where
+  readField (db, en) cn fi = read' db cn (CtxName en) fi
+    <&> \case
+      Nothing → Just disabled
+      Just _  → Just enabled
+
+
+
+instance ∀ k v. (MapKey k, Ord k, ReadField Ctx v) ⇒ RestoreField Ctx (Map k v) where
+  restoreField ctx@(db, en) cn (Field f) = do
+    keys ← (drop (length f + 1) <$>) ∘ filter (isPrefixOf (f <> ".")) <$> listCtx cn (CtxName en) db
+    Map.fromList <$> (forM keys
+                       (\k→ (fromKeyName k,) <$> restoreField ctx cn (Field $  f <> "." <> k)))
+instance ∀ k v. (MapKey k, Ord k, WriteField Ctx v) ⇒ StoreField Ctx (Map k v) where
+  storeField ctx@(db, en) cn fi@(Field f) xs = do
+    all ← filter (isPrefixOf (f <> ".")) <$> listCtx cn (CtxName en) db
+    forM_ all $ \old → do
+      removeFileIfExists old
+    forM_ (Map.toList xs) $ \(k, v) → do
+      writeField ctx cn (Field $ f<>"."<>toKeyName k) v
+
+-- * XXX: This is an instance tailored to a single field of Package:
+--   , pkDrvFields        ∷ Map DrvField DFValue -- ^ Non-overridable fields only
+instance {-# OVERLAPS #-} RestoreField Ctx (Map DrvField DFValue) where
+  restoreField (db, en) cn (Field fi) = Map.fromList ∘ catMaybes <$> mapM (readField db en) (Set.toList Drv.drvFieldsPkgSet)
+    where
+      readField ∷ PKGDB → EName → DrvField → IO (Maybe (DrvField, DFValue))
+      readField db en df = ((df,) ∘ DFValue df ∘ parseFieldTyped (Drv.drvFieldType df) <$>) <$> read cn (CtxName en) (Field $ fi <> "." <> (Drv.drvFieldNixName df)) db
+      parseAttributes ∷ Text → [Attr]
+      parseAttributes raw = Attr <$> L.delete "" (T.splitOn " " raw)
+      parseFieldTyped   (NTList NTVar) raw = sep [ fsep $ text ∘ unpack ∘ fromAttr <$> parseAttributes raw ]
+      parseFieldTyped   (NTList NTStr) raw = sep [ lbrack
+                                                 , fsep $ text <$> readSequence raw
+                                                 , rbrack ]
+      parseFieldTyped t@(NTList _)     _   = error $ printf "Unsupported list type: %s" (show t)
+      parseFieldTyped _                raw = text $ unpack raw
+
+
+
+init ∷ Text → IO PKGDB
+init pkgdbPath = Sys.withSystemTempDirectory "nh-temp" $
+  \((</> "new") ∘ pack → assyPath) → do
+    initDBat $ unpack pkgdbPath
+    -- Unfortunately, the create-then-rename trick is useless,
+    -- as /tmp is often on a different filesystem from the target.
+    -- And so the move is neither atomic, neither supported by renamePath.
+    --
+    -- Sys.renamePath (unpack assyPath) (unpack pkgdbPath)
+    pkgdbNixpkgs ← (internHaskellNixpkgs =<< locateNixpkgs)
+    pure PKGDB{..}
+      where
+        initDBat dir = do
+          -- Yes, the below check isn't atomic, so is an integrity risk.
+          -- Unfortunately, see above message.
+          Sys.doesPathExist dir >>= flip when
+            (error$printf "Cannot init PKGDB at busy path:  %s" dir)
+          Sys.createDirectory dir
+          forM_ allCNames $ \(CName cn)→
+            Sys.createDirectory $ dir Sys.</> unpack cn
 
 open ∷ Text → IO (Maybe PKGDB)
 open path = do
   valid ← foldM (\acc sub→ (acc ∧) <$> Sys.doesDirectoryExist (unpack $ path </> sub))
-    True (typeSub <$> [ETOver, ETMeta, ETGithub, ETHackage, ETBuild])
+    True (fromCName <$> allCNames)
   if valid
     then do -- printf "Found valid PKGDB at:  %s\n" $ unpack path
-            pure $ Just $ PKGDB path
+            nixpkgs ← internHaskellNixpkgs =<< locateNixpkgs
+            pure $ Just $ PKGDB path nixpkgs
     else pure Nothing
-  
-data EType
-  = ETPkg
-  | ETOver
-  | ETMeta
-  | ETGithub
-  | ETHackage
-  | ETBuild
-  | ETCache
+
+cnPath ∷ PKGDB → CName → Text
+cnPath PKGDB{..} (CName cn) = pkgdbPath </> cn
+
+path ∷ CName → CtxName → Field → PKGDB → Text
+path cn (CtxName en) (Field fi) db =
+  cnPath db cn </> en <.> fi
+
+data MetaF
+  = MSuppressShadow
+  | MDisable
+  | MChdir
+  | MRepoName
+  | MExplanation Field
+  | MERDeps
   deriving (Eq, Show)
 
-typeSub ∷ EType → Text
-typeSub ETPkg     = "def/non-nixpkgs"
-typeSub ETOver    = "def/over"
-typeSub ETMeta    = "def/meta"
-typeSub ETGithub  = "def/github"
-typeSub ETHackage = "def/hackage"
-typeSub ETBuild   = "build"
-typeSub ETCache   = "cache"
+metaPath ∷ Attr → MetaF → PKGDB → Text
+metaPath at mf db =
+  path cnMeta (attrCtx at) (metaField mf) db
+  where metaField ∷ MetaF → Field
+        metaField MRepoName                = Field "repoName"
+        metaField (MExplanation (Field x)) = Field $ x <> ".explanation"
+        metaField x                        = Field $ lowerShowT x
 
-path ∷ PKGDB → EType → Text → Field → Text
-path PKGDB{..} ty at (Field fi) =
-  pkgdbPath </> typeSub ty </> at <.> fi
-
-pathDir ∷ PKGDB → EType → Text
-pathDir PKGDB{..} ty =
-  pkgdbPath </> typeSub ty
-
-read ∷ PKGDB → EType → Text → Field → IO (Maybe Text)
-read  db ty at fi = do
-  let p = unpack $ path db ty at fi
+read ∷ CName → CtxName → Field → PKGDB → IO (Maybe Text)
+read cn en fi db = do
+  let p = unpack $ path cn en fi db
   (∃) ← Sys.doesFileExist p
   if (∃)
     then Just <$> Sys.readFile p
@@ -89,201 +278,109 @@ read  db ty at fi = do
     -- putStrLn $ "missing field: "<>show ty<>"/"<>unpack (fromField fi)<>" at " <>show p
     pure Nothing
 
-has ∷ PKGDB → EType → Text → Field → IO Bool
-has  db ty at fi = do
-  let p = unpack $ path db ty at fi
+read' ∷ PKGDB → CName → CtxName → Field → IO (Maybe Text)
+read' db cn en fi = read cn en fi db
+
+parse ∷ SimpleToken a ⇒ CName → CtxName → Field → PKGDB → IO (Maybe a)
+parse cn en fi db = do
+  join ∘ (diagReadCaseInsensitive <$>) <$> read cn en fi db
+
+has ∷ CName → CtxName → Field → PKGDB → IO Bool
+has cn en fi db = do
+  let p = unpack $ path cn en fi db
   Sys.doesFileExist p
 
-write ∷ PKGDB → EType → Text → Field → Maybe Text → IO ()
-write db ty at fi mval = do
-  let fpath   = unpack $ path db ty at fi
+removeFileIfExists ∷ Text → IO ()
+removeFileIfExists fpath =
+  Sys.doesFileExist (unpack fpath) >>=
+  (flip when $
+    Sys.removeFile (unpack fpath))
+
+rm ∷ CName → CtxName → Field → PKGDB → IO ()
+rm cn en fi db = removeFileIfExists $ path cn en fi db
+
+write ∷ CName → CtxName → Field → Maybe Text → PKGDB → IO ()
+write cn en fi mval db = do
+  let fpath   = unpack $ path cn en fi db
   fileExists ← Sys.doesFileExist fpath
   case (fileExists, mval) of
     (False, Nothing) → pure ()
     (True,  Nothing) → Sys.removeFile fpath
     (_,     Just v)  → do
-      dirExists ← Sys.doesDirectoryExist $ unpack $ pathDir db ty
+      dirExists ← Sys.doesDirectoryExist $ unpack $ cnPath db cn
       if dirExists
         then Sys.writeFile fpath v
-        else error $ "Malformed PKGDB: structural subdir doesn't exist: " <> (unpack $ pathDir db ty)
+        else errorT $ "Malformed PKGDB: structural subdir doesn't exist: " <> cnPath db cn
 
-list ∷ PKGDB → EType → IO (Set Text)
-list db ty = do
-  let dir = pathDir db ty
-  fulls ← (T.pack <$>) <$> Sys.listDirectory (unpack dir)
+write' ∷ PKGDB → CName → CtxName → Field → Maybe Text → IO ()
+write' db cn en fi mval = write cn en fi mval db
+
+listCName ∷ CName → PKGDB → IO [Text]
+listCName cn db = do
+  (T.pack <$>) <$> Sys.listDirectory (unpack $ cnPath db cn)
+
+list ∷ CName → PKGDB → IO (Set Text)
+list cn db = do
+  fulls ← listCName cn db
   let split = T.splitOn "." <$> fulls
       names = (!! 0) <$> split
-  pure $ Set.fromList names
+  pure $ Set.delete "" $ Set.fromList names
 
-listExtraDefs ∷ PKGDB → IO (Set Attr)
-listExtraDefs db = (Set.fromList ∘ (Attr <$>) ∘ Set.toList) <$> list db ETPkg
--- listExtraDefs db = (Attr <$>) <$> list db ETPkg
+listCtx ∷ CName → CtxName → PKGDB → IO [Text]
+listCtx cn (CtxName en) db = listCName cn db <&>
+  (drop (length en + 1) <$>) ∘ filter (T.isPrefixOf (en <> "."))
+
+
+
+wtest = do
+  Just db <- open "/home/deepfire/configuration-ghc84x/"
+  store (db, "lol" ∷ Text) $ Meta (Just $ RepoName "lol") DisableOverride Nothing [] (Just $ Attr "lol") ToLocal mempty
+rmeta = do
+  Just db <- open "/home/deepfire/configuration-ghc84x/"
+  recover (db, "hspec" ∷ Text) :: IO Meta
+rsrc = do
+  Just db <- open "/home/deepfire/configuration-ghc84x/"
+  recover (db, "hspec" ∷ Text) :: IO Src
+rover = do
+  Just db <- open "/home/deepfire/configuration-ghc84x/"
+  recover (db, "hspec" ∷ Text) :: IO Overrides
 
 
 
 attrRepoName ∷ Attr → Meta → RepoName
-attrRepoName (Attr name) Meta{..} = flip fromMaybe meRepoName $ RepoName name
+attrRepoName (Attr name) Meta{..} = RepoName name
 
 
 
-extraDefnPassField ∷ ExtraDefn → DerivationField → Maybe Doc
-extraDefnPassField ExtraDefn{..} fname = Map.lookup fname edDrvFields
+readFulldefnNames ∷ PKGDB → IO (Set Attr)
+readFulldefnNames db = (Attr <$>) <$> list cnPkg db
 
-extraDefnPassFieldOpt ∷ ExtraDefn → DerivationField → Doc
-extraDefnPassFieldOpt ed fname = extraDefnPassField ed fname &
-  fromMaybe empty
+readPkNames ∷ PKGDB → IO (Set Attr)
+readPkNames db = (Attr <$>) <$> list cnOver db
 
-extraDefnPassFieldMand ∷ ExtraDefn → DerivationField → Doc
-extraDefnPassFieldMand ed fname = extraDefnPassField ed fname &
-  (errNothing $ printf "Missing extra definition passfield '%s'." $ show fname)
+readPks ∷ PKGDB → IO (Map Attr Package)
+readPks db = readPkNames db
+  <&> Set.toList >>= mapM (\pkAttr→ do
+                             (pkAttr,) <$> (recover (db, fromAttr pkAttr)))
+  <&> Map.fromList
 
-writeExtraDefn ∷ PKGDB → ExtraDefn → IO ()
-writeExtraDefn db ExtraDefn{..} =
-  writeMeta      db edAttr                edMeta >>
-  writeGithub    db (ghRepoName edGithub) edGithub >>
-  writeDrvFields db edAttr                edDrvFields
-  where
-    docText = T.pack ∘ renderStyle (Style OneLineMode 1 1)
-    writeMeta db (Attr attr) Meta{..} = do
-      write db ETMeta  attr "repoName" $ fromRepo <$> meRepoName
-      write db ETMeta  attr "disable"  $ flagIf meDisable (Just "disable") Nothing
-      write db ETMeta  attr "chdir"    $ meChdir
-      write db ETMeta  attr "erdeps"   $ if not $ L.null meEssentialRevDeps
-                                         then Just $ docText $ fsep $ text ∘ T.unpack ∘ fromAttr <$> meEssentialRevDeps
-                                         else Nothing
-      write db ETMeta  attr "attrName" $ fromAttr <$> meAttrName
-    writeGithub db (RepoName repo) Github{..} = do
-      write db ETGithub      repo "upstream"  $ Just $ fromUser $ ghUpstream
-      write db ETGithub      repo "user"      $ Just $ fromUser $ fromMaybe ghUpstream ghUser
-      write db ETGithub      repo "rev"       $ Just $ fromRef  $ ghGitRef
-      write db ETGithub      repo "hash"      $ Just $ fromNixHash ghNixHash
-      write db ETGithub      repo "pr"        $ fromPR    <$> ghPR
-      write db ETGithub      repo "issue"     $ fromIssue <$> ghIssue
-      write db ETGithub      repo "timestamp"   Nothing -- XXX
-    writeDrvFields db (Attr attr) drvFields = do
-      forM_ (Map.toList drvFields) $
-        \(field, content) → do
-          write db ETPkg     attr (Field $ Proj.drvFieldNixName field) $ Just $ docText content
+
 
-readExtraDefn ∷ PKGDB → Attr → IO ExtraDefn
-readExtraDefn db attr = do
-  let readMeta   db (Attr attr) = do
-        meRepoName         ← (RepoName <$>) <$> read db ETMeta attr "repoName"
-        meDisable          ← fromBool       <$> has  db ETMeta attr "disable"
-        meChdir            ←                    read db ETMeta attr "chdir"
-        meEssentialRevDeps ← (Attr <$>) ∘ parseSequence ∘ fromMaybe ""
-                                            <$> read db ETMeta attr "erdeps"
-        meAttrName         ← (Attr     <$>) <$> read db ETMeta attr "attrName" -- for versioned shadow attributes
-        pure Meta{..}
-      readGithub db ghRepoName@(RepoName repo) = do
-        let ghUser = Nothing
-        ghUpstream         ← read db ETGithub repo "upstream" <&>
-                             GithubUser ∘ fromMaybe (error $ printf "Missing field '%s' in repo '%s'." ("upstream"∷String) $ unpack repo)
-        ghUser             ← read db ETGithub repo "user" <&>
-                             \case
-                               Nothing   → Nothing
-                               Just user → if user ≡ fromUser ghUpstream
-                                           then Nothing
-                                           else Just $ GithubUser user
-        ghGitRef           ← read db ETGithub repo "rev" <&>
-                             GitRef ∘ fromMaybe (error $ printf "Missing field '%s' in repo '%s'." ("rev"∷String) $ unpack repo)
-        ghNixHash          ← read db ETGithub repo "hash" <&>
-                             NixHash ∘ fromMaybe (error $ printf "Missing field '%s' in repo '%s'." ("hash"∷String) $ unpack repo)
-        ghPR               ← (GithubPR    <$>) <$> read db ETGithub repo "pr"
-        ghIssue            ← (GithubIssue <$>) <$> read db ETGithub repo "issue"
-        ghTimestamp        ← (ElapsedSince ∘ Seconds ∘ R.read ∘ unpack <$>) <$> read db ETGithub repo "timestamp"
-        pure Github{..}
-      parseAttributes ∷ Text → [Attr]
-      parseAttributes raw = Attr <$> L.delete "" (T.splitOn " " raw)
-      parseStrings    ∷ Text → [String]
-      parseStrings    raw = parseSequence raw
-      edAttr  = attr
-  edMeta      ← readMeta        db attr
-  edGithub    ← readGithub      db (attrRepoName attr edMeta)
-  let readField db (Attr attr) field = do
-        ((,) field ∘ parseFieldTyped (drvFieldType field) <$>) <$> read db ETPkg attr (Field $ Proj.drvFieldNixName field)
-      parseFieldTyped   (NTList NTVar) raw = sep [ fsep $ text ∘ unpack ∘ fromAttr <$> parseAttributes raw ]
-      parseFieldTyped   (NTList NTStr) raw = sep [ lbrack
-                                                 , fsep $ text <$> parseStrings raw
-                                                 , rbrack ]
-      parseFieldTyped t@(NTList _)     _   = error $ printf "Unsupported list type: %s" (show t)
-      parseFieldTyped _                raw = text $ unpack raw
-  edDrvFields ← Map.fromList ∘ catMaybes <$> mapM (readField db attr) (Set.toList Proj.drvPassthroughFields)
-  -- putStrLn $ "read back fields:  " <> (show $ Map.toList edDrvFields)
-  pure $ ExtraDefn{..}
+pkShadowed ∷ Package → Nixpkgs → Bool
+pkShadowed pk@Package{pkAttr, pkOver=pkOver@Overrides{ovSrc=Just Hackage{..}}} nixpkgs =
+  attrShadowedAt pkAttr haRelease nixpkgs
+pkShadowed _ _ = False
 
-maybeAttr ∷ Field → Maybe Doc → Doc
-maybeAttr _ Nothing = empty
-maybeAttr (Field field) (Just doc)  = attr (unpack field) doc
-
-maybeAttr' ∷ Field → Maybe Doc → Doc
-maybeAttr' _ Nothing = empty
-maybeAttr' (Field field) (Just doc) = vcat
-  [ text (unpack field) <+> equals <+> lbrack
-  , nest 2 doc
-  , rbrack <> semi ]
-  
-instance Pretty ExtraDefn where
-  pPrint ed@(ExtraDefn attrib meta@Meta{..} Github{..} fields) =
-    vcat
-    [ text "with pkgs;" <+> text "with self;" <+> text "mkDerivation" <+> lbrace
-    , text " "
-    , nest 2 $ vcat
-      [ attr "pname"   $ string $ unpack $ fromAttr attrib
-      , attr "version" $ extraDefnPassFieldMand ed DFversion
-      , text "src" <+> equals <+> text "fetchFromGitHub" <+> lbrace
-           , nest 2 $ vcat
-             [ attr "owner"  $ string $ unpack (fromUser    ghUpstream)
-             , attr "repo"   $ string $ unpack (fromRepo $ attrRepoName attrib meta)
-             , attr "rev"    $ string $ unpack (fromRef     ghGitRef)
-             , attr "sha256" $ string $ unpack (fromNixHash ghNixHash)
-             ]
-      , rbrace <> semi
-      , maybeAttr "postUnpack" (meChdir <&> (\cd→ string ("sourceRoot+=/" <> unpack cd <> "; echo source root reset to $sourceRoot")))
-      , maybeAttr "configureFlags"               $ extraDefnPassField ed DFconfigureFlags
-      , maybeAttr "isLibrary"                    $ extraDefnPassField ed DFisLibrary
-      , maybeAttr "isExecutable"                 $ extraDefnPassField ed DFisExecutable
-      , maybeAttr "enableSeparateDataOutput"     $ extraDefnPassField ed DFenableSeparateDataOutput
-
-      , maybeAttr' "setupHaskellDepends"         $ extraDefnPassField ed DFsetupHaskellDepends     
-      , maybeAttr' "libraryHaskellDepends"       $ extraDefnPassField ed DFlibraryHaskellDepends   
-      , maybeAttr' "executableHaskellDepends"    $ extraDefnPassField ed DFexecutableHaskellDepends
-      , maybeAttr' "testHaskellDepends"          $ extraDefnPassField ed DFtestHaskellDepends      
-      , maybeAttr' "benchmarkHaskellDepends"     $ extraDefnPassField ed DFbenchmarkHaskellDepends 
-
-      , maybeAttr' "setupSystemDepends"          $ extraDefnPassField ed DFsetupSystemDepends     
-      , maybeAttr' "librarySystemDepends"        $ extraDefnPassField ed DFlibrarySystemDepends   
-      , maybeAttr' "executableSystemDepends"     $ extraDefnPassField ed DFexecutableSystemDepends
-      , maybeAttr' "testSystemDepends"           $ extraDefnPassField ed DFtestSystemDepends      
-      , maybeAttr' "benchmarkSystemDepends"      $ extraDefnPassField ed DFbenchmarkSystemDepends 
-
-      , maybeAttr' "setupPkgconfigDepends"       $ extraDefnPassField ed DFsetupPkgconfigDepends     
-      , maybeAttr' "libraryPkgconfigDepends"     $ extraDefnPassField ed DFlibraryPkgconfigDepends   
-      , maybeAttr' "executablePkgconfigDepends"  $ extraDefnPassField ed DFexecutablePkgconfigDepends
-      , maybeAttr' "testPkgconfigDepends"        $ extraDefnPassField ed DFtestPkgconfigDepends      
-      , maybeAttr' "benchmarkPkgconfigDepends"   $ extraDefnPassField ed DFbenchmarkPkgconfigDepends 
-
-      , maybeAttr' "setupToolDepends"            $ extraDefnPassField ed DFsetupToolDepends     
-      , maybeAttr' "libraryToolDepends"          $ extraDefnPassField ed DFlibraryToolDepends   
-      , maybeAttr' "executableToolDepends"       $ extraDefnPassField ed DFexecutableToolDepends
-      , maybeAttr' "testToolDepends"             $ extraDefnPassField ed DFtestToolDepends      
-      , maybeAttr' "benchmarkToolDepends"        $ extraDefnPassField ed DFbenchmarkToolDepends 
-      
-      , maybeAttr "enableLibraryProfiling"       $ extraDefnPassField ed DFenableLibraryProfiling
-      , maybeAttr "enableExecutableProfiling"    $ extraDefnPassField ed DFenableExecutableProfiling
-      , maybeAttr "enableSplitObjs"              $ extraDefnPassField ed DFenableSplitObjs
-      , maybeAttr "doHaddock"                    $ Nothing -- Over{..}
-      , maybeAttr "jailbreak"                    $ Nothing -- Over{..}
-      , maybeAttr "doCheck"                      $ Nothing -- Over{..}
-      , maybeAttr "testTarget"                   $ extraDefnPassField ed DFtestTarget
-      , maybeAttr "hyperlinkSource"              $ extraDefnPassField ed DFhyperlinkSource
-      -- XXX: not really sure how to handle this
-      -- , maybeAttr "phaseOverrides"              $ (vcat ∘ (map text . lines) <$> extraDefnPassField ed DFphaseOverrides)
-      , maybeAttr "homepage"    $ extraDefnPassField     ed DFmetaSectionHomepage
-      , maybeAttr "description" $ extraDefnPassField     ed DFmetaSectionDescription
-      , attr      "license"     $ extraDefnPassFieldMand ed DFmetaSectionLicense
-      , maybeAttr "platforms"   $ extraDefnPassField     ed DFmetaSectionPlatforms
-      , maybeAttr "maintainers" $ extraDefnPassField     ed DFmetaSectionMaintainers
-      ]
-    , rbrace
-    ]
+pkStatus ∷ Package → Nixpkgs → Status
+pkStatus pk@Package{pkOver=over@Overrides{..}} nixpkgs = do
+  case ovSrc of
+    Just Hackage{..} → if pkShadowed pk nixpkgs
+                       then StShadowed
+                       else StHackaged
+    Just Github{..}  → case (over ≡ mempty, Map.member DFmetaSectionLicense ovDrvFields) of
+                         (True, _) → StConfig
+                         (_, True) → StFulldefn
+                         (_, _)    → StDefault
+    Nothing          → if over ≡ mempty
+                       then StConfig
+                       else StDefault

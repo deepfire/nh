@@ -18,9 +18,9 @@ import           NH.Config
 
 
 
-githubURLComponents ∷ URL → (GithubUser, RepoName)
+githubURLComponents ∷ URL → (GithubUser, Repo)
 githubURLComponents (URL text) =
   let pieces = T.splitOn "/" text
   in (,)
      (GithubUser $ pieces !! 3)
-     (RepoName   $ pieces !! 4)
+     (Repo       $ pieces !! 4)
