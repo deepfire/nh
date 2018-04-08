@@ -31,6 +31,8 @@ import           Text.PrettyPrint.HughesPJClass      (Doc(..))
 
 import qualified Debug.Trace                      as DBG
 
+import           NH.MRecord
+
 -- * Local
 import           NH.Misc
 
@@ -47,8 +49,6 @@ attrCtx ∷ Attr     → CtxName
 repoCtx ∷ RepoName → CtxName
 attrCtx = CtxName ∘ coerce
 repoCtx = CtxName ∘ coerce
-
-newtype Field                   = Field                   { fromField             ∷ Text } deriving (Eq, IsString, Ord, Show, MapKey)
 
 newtype GHCVer                  = GHCVer                  { fromGHCVer            ∷ Text } deriving (Eq, IsString, Show)
 newtype Subdir                  = Subdir                  { fromDir               ∷ Text } deriving (Eq, IsString, Show)
@@ -90,32 +90,6 @@ instance CFlag Check          where
 instance CFlag Haddock        where
   data    Flag Haddock        = DoHaddock       | DontHaddock   deriving (Bounded, Eq, Ord, Show)
 
--- * Flag machinery
-class (Bounded (Flag a), Eq (Flag a)) ⇒ CFlag (a ∷ Flags) where
-  data Flag a
-  toBool ∷ (Flag a) → Bool
-  toBool = (≡ enabled)
-  fromBool ∷ Bool → (Flag a)
-  fromBool x = if x then minBound else maxBound
-  enabled, disabled ∷ (Flag a)
-  enabled  = minBound
-  disabled = maxBound
-  opposite ∷ Flag a → Flag a
-  opposite = fromBool . not . toBool
-  flagIf ∷ (Flag a) → b → b → b
-  flagIf f true false = if toBool f then true else false
-  -- XXX: most should be de-TC-ised,
-  -- however, using TC's as poor-man's modules is so alluring..
-
-enabledIsJust ∷ CFlag b ⇒ a → Flag b → Maybe a
-enabledIsJust x (toBool → True) = Just x
-enabledIsJust _ _               = Nothing
-
--- flag ∷ Flag a ⇒ a → ArgName → Char → Optional HelpMessage → Parser a
--- flag effect long ch help = (\case
---                                True  → effect
---                                False → opposite effect) <$> switch long ch help
-
 
 
 data SrcSpec
@@ -124,28 +98,29 @@ data SrcSpec
   deriving (Show)
 
 
-
-data NixType
-  = NTStr
-  | NTPath
-  | NTBool
-  | NTInt
-  | NTVar
-  | NTList NixType
-  | NTAttrset (Map Text NixType)
-  | NTFunction [NixType] NixType
-  deriving (Eq, Ord, Show)
-
-
 -- Global TODO:
 -- 
--- 1. We're writing doCheck and doHaddock -- writing might be ok, per se
---    ..but how do we know, when it comes to emission, whether to emit or not?
---    Anyhow, better have a handle on whether to write.
---    ..and 'fieldActive' already serves that role.
+-- 1. Anomalous emission for inverted flags, like doCheck and doHaddock.
 --    Could be driven by significance of defaults, I guess.
 -- 2. db conversion
 --
+data Nixpkgs = Nixpkgs
+  { nixpkgsPath            ∷ Text
+  , nixpkgsHackagePackages ∷ Set.Set Attr
+  }
+
+-- | Context type for PKGDB-oriented MRecord instances:
+type Ctx = (PKGDB, EName)
+
+newtype CName = CName { fromCName ∷ Text } deriving (Eq, Ord, Show)
+
+type instance ConsCtx Ctx = CName
+
+data PKGDB = PKGDB
+  { pkgdbPath          ∷ Text
+  , pkgdbNixpkgs       ∷ Nixpkgs
+  }
+
 data Package = Package
   { pkAttr             ∷ Attr
   , pkRepo             ∷ Maybe GithubRepo

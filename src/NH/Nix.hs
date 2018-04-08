@@ -9,6 +9,7 @@ import           Control.Lens                 hiding (argument)
 import           Data.Foldable                       (find)
 import           Data.Fix                            (Fix(..))
 import qualified Data.List                        as L
+import qualified Data.Map                         as Map
 import           Data.Set                            (Set)
 import qualified Data.Set                         as Set
 import           Data.Set.Lens                       (setOf)
@@ -23,16 +24,23 @@ import           Nix.Pretty
 
 
 
-import           NH.FS
 import           NH.Misc
 import           NH.Types
 
 
 
-data Nixpkgs = Nixpkgs
-  { nixpkgsPath            ∷ Text
-  , nixpkgsHackagePackages ∷ Set Attr
-  }
+data NixType
+  = NTStr
+  | NTPath
+  | NTBool
+  | NTInt
+  | NTVar
+  | NTList NixType
+  | NTAttrset (Map.Map Text NixType)
+  | NTFunction [NixType] NixType
+  deriving (Eq, Ord, Show)
+
+
 
 internHaskellNixpkgs ∷ Text → IO Nixpkgs
 internHaskellNixpkgs nixpkgsPath = do
@@ -45,7 +53,7 @@ locateNixpkgs = T.stripEnd <$> stdoutCall (Desc "locate <nixpkgs>")
 
 nixpkgsHackagePackagesTopAttrs ∷ Text → IO (Set Attr)
 nixpkgsHackagePackagesTopAttrs nixpkgs = do
-  let file = nixpkgs </> "pkgs/development/haskell-modules/hackage-packages.nix"
+  let file = nixpkgs <> "/pkgs/development/haskell-modules/hackage-packages.nix"
   stdoutCallSh (Desc "") (ShCmd $ "grep '\" = callPackage' "<> file <>" | sed 's/^.*\"\\(.*\\)\" = callPackage.*$/\\1/'")
   <&> flip Set.difference (Set.singleton "") ∘ Set.fromList ∘ (Attr <$>) ∘ T.lines
 

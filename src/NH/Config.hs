@@ -27,6 +27,7 @@ import           Debug.Trace
 
 import           NH.Types
 import           NH.FS
+import           NH.Misc
 
 
 -- * Constants
@@ -80,8 +81,8 @@ readConfigOldStyle path = do
       setSingleField smth                  x v = x -- flip trace x $ "Ignoring config field: " <> T.unpack smth
   pure $ foldl (\cfg (k,v)→ setSingleField k cfg v) mempty kvs
        & cConfig       .~ path
-       & cGHCOverrides .~ pack (Sys.takeDirectory $ unpack path) </> "overrides.nix"
-       & cGHCPackages  .~ pack (Sys.takeDirectory $ unpack path) </> "packages.nix"
+       & cGHCOverrides .~ pack (Sys.takeDirectory $ unpack path) <> "/overrides.nix"
+       & cGHCPackages  .~ pack (Sys.takeDirectory $ unpack path) <> "/packages.nix"
 
 readShellAssignment ∷ (Monad p, P.TokenParsing p) ⇒ p (T.Text, T.Text)
 readShellAssignment = do

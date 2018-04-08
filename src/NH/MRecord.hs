@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -41,6 +42,7 @@ import qualified Data.Map                         as Map
 import           Data.Maybe
 import           Data.Set                            (Set)
 import qualified Data.Set                         as Set
+import           Data.String
 import           Data.Text                           (Text, pack, unpack, toLower, toUpper, drop, take, length, isSuffixOf)
 import qualified Data.Text                        as T
 import qualified GHC.Types                        as Type
@@ -57,23 +59,21 @@ import           Generics.SOP                        (Rep, NS(..), NP(..), SOP(.
 import qualified Generics.SOP                     as SOP
 import qualified Generics.SOP.NS                  as SOP
 
-import           NH.Types
-import           NH.Misc
-
 import           GHC.Stack
 import           Debug.Trace (trace)
 
 
 
-newtype CName = CName { fromCName ∷ Text } deriving (Eq, Ord, Show)
+newtype Field = Field { fromField ∷ Text } deriving (Eq, IsString, Ord, Show)
 
 type ADTChoiceT        = Int
 type ADTChoice   m xss = m ADTChoiceT
 -- type ADTChoice   m xss = m (NS (K ()) xss)
 type ADTChoiceIO   xss = ADTChoice IO xss
 
+type family ConsCtx ctx ∷ Type.Type
+
 class RecordCtx    ctx where
-  type ConsCtx     ctx ∷ Type.Type
   nameMap       ∷  ctx → [(Text, Text)]
   errCtxDesc    ∷  ctx → ConsCtx ctx → Field → Text
   dropField     ∷  ctx → ConsCtx ctx → Field → IO ()
@@ -84,7 +84,7 @@ class RecordCtx    ctx where
 
 class (SOP.Generic a, SOP.HasDatatypeInfo a, RecordCtx ctx) ⇒ Record ctx a where
   prefixChars   ∷  ctx → Proxy a → Int
-  consCtx       ∷  ctx → Proxy a → CName → ADTChoiceT → ConsCtx ctx
+  consCtx       ∷  ctx → Proxy a → Text → ADTChoiceT → ConsCtx ctx
   -- *
   restoreChoice ∷  ctx → Proxy a → ADTChoiceIO xss
   saveChoice    ∷  ctx → a → IO ()
@@ -95,6 +95,8 @@ class (SOP.Generic a, SOP.HasDatatypeInfo a, RecordCtx ctx) ⇒ Record ctx a whe
   toField c r x = --trace (T.unpack x <> "→" <> T.unpack (maybeRemap $ dropDetitle (prefixChars c r) x)) $
     Field $ maybeRemap $ dropDetitle (prefixChars c r) x
     where maybeRemap x = maybe x id (lookup x $ nameMap c)
+          dropDetitle ∷ Int → Text → Text
+          dropDetitle n (drop 2 → x) = toLower (take 1 x) <> drop 1 x
 
 class Interpret a where
   fromText ∷ Text → a
@@ -119,7 +121,7 @@ class StoreField   ctx a where   storeField  ∷ ctx → ConsCtx ctx → Field �
 
 
 fieldError ∷ HasCallStack ⇒ RecordCtx ctx ⇒ ctx → ConsCtx ctx → Field → Text → b
-fieldError ctx cc field mesg = errorT $ errCtxDesc ctx cc field <> ": " <> mesg
+fieldError ctx cc field mesg = error $ unpack $ errCtxDesc ctx cc field <> ": " <> mesg
 
 
 
@@ -188,7 +190,7 @@ withNames p ctx consName consNr (fs ∷ NP (K Text) xs) = hcliftA (pRField (Prox
   where
     aux ∷ RestoreField ctx f ⇒ K Text f → IO f
     aux (K "") = error "Empty field names not supported."
-    aux (K fi) = restoreField ctx (consCtx ctx p (CName consName) consNr) (toField ctx p fi)
+    aux (K fi) = restoreField ctx (consCtx ctx p consName consNr) (toField ctx p fi)
 
 store   ∷ ∀ a ctx.     (Record ctx a, All2 (StoreField ctx) (Code a))            ⇒ ctx → a → IO ()
 store   ctx x = do
@@ -212,7 +214,7 @@ storeCtor ctx x (NC (Record consName fs) consNr) = K ∘ hcollapse ∘ hcliftA2 
     p = Proxy ∷ Proxy a
     aux ∷ StoreField ctx f ⇒ FieldInfo f → I f → K (IO ()) f
     aux (FieldInfo fi) (I a) = K $ do
-      storeField ctx (consCtx ctx p (CName $ pack consName) consNr) (toField ctx p $ pack fi) a
+      storeField ctx (consCtx ctx p (pack consName) consNr) (toField ctx p $ pack fi) a
 
 pRecord       ∷ Proxy ctx → Proxy (Record ctx)
 pRecord     _ = Proxy

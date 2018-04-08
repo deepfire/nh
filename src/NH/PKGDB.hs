@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -72,26 +73,21 @@ import qualified Debug.Trace                      as DBG
 import           NH.Types
 import           NH.Config
 import           NH.Derivation                    as Drv
-import           NH.FS
+import qualified NH.FS                            as FS
+import           NH.FS                        hiding (open, init)
 import           NH.Misc
 import           NH.MRecord
 import           NH.Nix
 
 
 
-data PKGDB = PKGDB
-  { pkgdbPath    ∷ Text
-  , pkgdbNixpkgs ∷ Nixpkgs
-  }
-
 cnDrvMeta,        cnGRepo, cnGithub, cnHackage, cnMeta, cnOver,      cnPkg ∷ CName
 allCNames@[cnDrvMeta, cnGRepo, cnGithub, cnHackage, cnMeta, cnOver, cnPkg] = CName <$>
   ["DrvMeta", "GithubRepo", "Github", "Hackage", "Meta", "Overrides", "Package"]
 
-type Ctx = (PKGDB, EName)
+deriving instance MapKey Field
 
 instance RecordCtx Ctx where
-  type ConsCtx     Ctx = CName
   errCtxDesc  (_,  en) cn (Field fi) = T.pack $
     printf "%s:%s:%s" (unpack en) (unpack fi) (unpack $ fromCName cn)
   listFields  (db, en) cn            = (Field <$>) <$> listCtx cn (CtxName en) db
@@ -101,10 +97,10 @@ instance RecordCtx Ctx where
     [("nixHash", "hash")]
 
 instance {-# OVERLAPPABLE #-} (SOP.Generic a, SOP.HasDatatypeInfo a) ⇒ Record Ctx a where
-  prefixChars _ _ = 2; consCtx _ _ n _ = n
+  prefixChars _ _ = 2; consCtx _ _ n _ = CName n
 instance Record Ctx Src        where
   prefixChars _ _ = 2
-  consCtx _ _ n _ = n
+  consCtx _ _ n _ = CName n
   saveChoice (db, en)  Github{..} = write' db  cnOver (CtxName en) "src" (Just "github")
   saveChoice (db, en) Hackage{..} = write' db  cnOver (CtxName en) "src" (Just "hackage")
   restoreChoice ctx _ = do
@@ -182,12 +178,13 @@ instance CFlag a ⇒  ReadField Ctx (Flag a) where
 
 
 
-instance ∀ k v. (MapKey k, Ord k, ReadField Ctx v) ⇒ RestoreField Ctx (Map k v) where
+instance (MapKey k, Ord k, ReadField Ctx v) ⇒ RestoreField Ctx (Map k v) where
   restoreField ctx@(db, en) cn (Field f) = do
+    -- XXX: this is an abstraction leak:
     keys ← (drop (length f + 1) <$>) ∘ filter (isPrefixOf (f <> ".")) <$> listCtx cn (CtxName en) db
     Map.fromList <$> (forM keys
                        (\k→ (fromKeyName k,) <$> restoreField ctx cn (Field $  f <> "." <> k)))
-instance ∀ k v. (MapKey k, Ord k, WriteField Ctx v) ⇒ StoreField Ctx (Map k v) where
+instance (MapKey k, Ord k, WriteField Ctx v) ⇒ StoreField Ctx (Map k v) where
   storeField ctx@(db, en) cn fi@(Field f) xs = do
     all ← filter (isPrefixOf (f <> ".")) <$> listCtx cn (CtxName en) db
     forM_ all $ \old → do
@@ -201,6 +198,7 @@ instance {-# OVERLAPS #-} RestoreField Ctx (Map DrvField DFValue) where
   restoreField (db, en) cn (Field fi) = Map.fromList ∘ catMaybes <$> mapM (readField db en) (Set.toList Drv.drvFieldsPkgSet)
     where
       readField ∷ PKGDB → EName → DrvField → IO (Maybe (DrvField, DFValue))
+      -- XXX: this is an abstraction leak:
       readField db en df = ((df,) ∘ DFValue df ∘ parseFieldTyped (Drv.drvFieldType df) <$>) <$> read cn (CtxName en) (Field $ fi <> "." <> (Drv.drvFieldNixName df)) db
       parseAttributes ∷ Text → [Attr]
       parseAttributes raw = Attr <$> L.delete "" (T.splitOn " " raw)
@@ -214,121 +212,16 @@ instance {-# OVERLAPS #-} RestoreField Ctx (Map DrvField DFValue) where
 
 
 init ∷ Text → IO PKGDB
-init pkgdbPath = Sys.withSystemTempDirectory "nh-temp" $
-  \((</> "new") ∘ pack → assyPath) → do
-    initDBat $ unpack pkgdbPath
-    -- Unfortunately, the create-then-rename trick is useless,
-    -- as /tmp is often on a different filesystem from the target.
-    -- And so the move is neither atomic, neither supported by renamePath.
-    --
-    -- Sys.renamePath (unpack assyPath) (unpack pkgdbPath)
-    pkgdbNixpkgs ← (internHaskellNixpkgs =<< locateNixpkgs)
-    pure PKGDB{..}
-      where
-        initDBat dir = do
-          -- Yes, the below check isn't atomic, so is an integrity risk.
-          -- Unfortunately, see above message.
-          Sys.doesPathExist dir >>= flip when
-            (error$printf "Cannot init PKGDB at busy path:  %s" dir)
-          Sys.createDirectory dir
-          forM_ allCNames $ \(CName cn)→
-            Sys.createDirectory $ dir Sys.</> unpack cn
+init = FS.init allCNames
 
 open ∷ Text → IO (Maybe PKGDB)
-open path = do
-  valid ← foldM (\acc sub→ (acc ∧) <$> Sys.doesDirectoryExist (unpack $ path </> sub))
-    True (fromCName <$> allCNames)
-  if valid
-    then do -- printf "Found valid PKGDB at:  %s\n" $ unpack path
-            nixpkgs ← internHaskellNixpkgs =<< locateNixpkgs
-            pure $ Just $ PKGDB path nixpkgs
-    else pure Nothing
-
-cnPath ∷ PKGDB → CName → Text
-cnPath PKGDB{..} (CName cn) = pkgdbPath </> cn
-
-path ∷ CName → CtxName → Field → PKGDB → Text
-path cn (CtxName en) (Field fi) db =
-  cnPath db cn </> en <.> fi
-
-data MetaF
-  = MSuppressShadow
-  | MDisable
-  | MChdir
-  | MRepoName
-  | MExplanation Field
-  | MERDeps
-  deriving (Eq, Show)
-
-metaPath ∷ Attr → MetaF → PKGDB → Text
-metaPath at mf db =
-  path cnMeta (attrCtx at) (metaField mf) db
-  where metaField ∷ MetaF → Field
-        metaField MRepoName                = Field "repoName"
-        metaField (MExplanation (Field x)) = Field $ x <> ".explanation"
-        metaField x                        = Field $ lowerShowT x
-
-read ∷ CName → CtxName → Field → PKGDB → IO (Maybe Text)
-read cn en fi db = do
-  let p = unpack $ path cn en fi db
-  (∃) ← Sys.doesFileExist p
-  if (∃)
-    then Just <$> Sys.readFile p
-    else do
-    -- putStrLn $ "missing field: "<>show ty<>"/"<>unpack (fromField fi)<>" at " <>show p
-    pure Nothing
+open = FS.open allCNames
 
 read' ∷ PKGDB → CName → CtxName → Field → IO (Maybe Text)
 read' db cn en fi = read cn en fi db
 
-parse ∷ SimpleToken a ⇒ CName → CtxName → Field → PKGDB → IO (Maybe a)
-parse cn en fi db = do
-  join ∘ (diagReadCaseInsensitive <$>) <$> read cn en fi db
-
-has ∷ CName → CtxName → Field → PKGDB → IO Bool
-has cn en fi db = do
-  let p = unpack $ path cn en fi db
-  Sys.doesFileExist p
-
-removeFileIfExists ∷ Text → IO ()
-removeFileIfExists fpath =
-  Sys.doesFileExist (unpack fpath) >>=
-  (flip when $
-    Sys.removeFile (unpack fpath))
-
-rm ∷ CName → CtxName → Field → PKGDB → IO ()
-rm cn en fi db = removeFileIfExists $ path cn en fi db
-
-write ∷ CName → CtxName → Field → Maybe Text → PKGDB → IO ()
-write cn en fi mval db = do
-  let fpath   = unpack $ path cn en fi db
-  fileExists ← Sys.doesFileExist fpath
-  case (fileExists, mval) of
-    (False, Nothing) → pure ()
-    (True,  Nothing) → Sys.removeFile fpath
-    (_,     Just v)  → do
-      dirExists ← Sys.doesDirectoryExist $ unpack $ cnPath db cn
-      if dirExists
-        then Sys.writeFile fpath v
-        else errorT $ "Malformed PKGDB: structural subdir doesn't exist: " <> cnPath db cn
-
 write' ∷ PKGDB → CName → CtxName → Field → Maybe Text → IO ()
 write' db cn en fi mval = write cn en fi mval db
-
-listCName ∷ CName → PKGDB → IO [Text]
-listCName cn db = do
-  (T.pack <$>) <$> Sys.listDirectory (unpack $ cnPath db cn)
-
-list ∷ CName → PKGDB → IO (Set Text)
-list cn db = do
-  fulls ← listCName cn db
-  let split = T.splitOn "." <$> fulls
-      names = (!! 0) <$> split
-  pure $ Set.delete "" $ Set.fromList names
-
-listCtx ∷ CName → CtxName → PKGDB → IO [Text]
-listCtx cn (CtxName en) db = listCName cn db <&>
-  (drop (length en + 1) <$>) ∘ filter (T.isPrefixOf (en <> "."))
 
 
 
@@ -353,10 +246,10 @@ attrRepoName (Attr name) Meta{..} = RepoName name
 
 
 readFulldefnNames ∷ PKGDB → IO (Set Attr)
-readFulldefnNames db = (Attr <$>) <$> list cnPkg db
+readFulldefnNames db = (Attr ∘ unCtxName <$>) <$> list cnPkg db
 
 readPkNames ∷ PKGDB → IO (Set Attr)
-readPkNames db = (Attr <$>) <$> list cnOver db
+readPkNames db = (Attr ∘ unCtxName <$>) <$> list cnOver db
 
 readPks ∷ PKGDB → IO (Map Attr Package)
 readPks db = readPkNames db

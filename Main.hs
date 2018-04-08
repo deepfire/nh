@@ -91,7 +91,6 @@ import           NH.Derivation
 import           NH.Emission
 import           NH.Misc
 import           NH.Nix
-import           NH.PKGDB                              (PKGDB(PKGDB))
 import qualified NH.PKGDB                           as PKGDB
 import           NH.Types
 

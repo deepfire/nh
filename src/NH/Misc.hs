@@ -1,7 +1,11 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeInType #-}
 {-# LANGUAGE UnicodeSyntax #-}
 {-# LANGUAGE ViewPatterns #-}
 module NH.Misc
@@ -17,6 +21,9 @@ import qualified Data.Text                        as T
 import           Data.Text                           (Text, pack, unpack, take, drop, toLower, toUpper, length)
 import           Prelude                      hiding (take, drop, length)
 import           Prelude.Unicode
+import qualified System.Directory                 as Sys
+import qualified System.IO.Temp                   as Sys
+import qualified System.FilePath                  as Sys
 import qualified Text.Printf                      as T
 import qualified Text.Read.Lex                    as R
 import qualified Text.ParserCombinators.ReadP     as R
@@ -76,11 +83,6 @@ defineMaybe _ y       = y
 
 
 
-dropDetitle ∷ Int → Text → Text
-dropDetitle n (drop 2 → x) = toLower (take 1 x) <> drop 1 x
-addRetitle  ∷ Text → Text → Text
-addRetitle  p x = p <> toUpper (take 1 x) <> drop 1 x
-
 -- XXX: factor
 readNames ∷ Text → [Text]
 readNames raw = loop [] (unpack raw)
@@ -136,3 +138,39 @@ charMap from to  x                = x
 
 showDocOneLine ∷ Doc → Text
 showDocOneLine = pack ∘ renderStyle (Style OneLineMode 1 1)
+
+
+
+-- * Flag machinery
+class (Bounded (Flag a), Eq (Flag a)) ⇒ CFlag a where
+  data Flag a
+  toBool ∷ (Flag a) → Bool
+  toBool = (≡ enabled)
+  fromBool ∷ Bool → (Flag a)
+  fromBool x = if x then minBound else maxBound
+  enabled, disabled ∷ (Flag a)
+  enabled  = minBound
+  disabled = maxBound
+  opposite ∷ Flag a → Flag a
+  opposite = fromBool . not . toBool
+  flagIf ∷ (Flag a) → b → b → b
+  flagIf f true false = if toBool f then true else false
+  -- XXX: most should be de-TC-ised,
+  -- however, using TC's as poor-man's modules is so alluring..
+
+enabledIsJust ∷ CFlag b ⇒ a → Flag b → Maybe a
+enabledIsJust x (toBool → True) = Just x
+enabledIsJust _ _               = Nothing
+
+-- flag ∷ Flag a ⇒ a → ArgName → Char → Optional HelpMessage → Parser a
+-- flag effect long ch help = (\case
+--                                True  → effect
+--                                False → opposite effect) <$> switch long ch help
+
+
+
+removeFileIfExists ∷ Text → IO ()
+removeFileIfExists fpath =
+  Sys.doesFileExist (unpack fpath) >>=
+  (flip when $
+    Sys.removeFile (unpack fpath))
