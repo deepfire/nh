@@ -51,6 +51,11 @@ locateNixpkgs ∷ IO Text
 locateNixpkgs = T.stripEnd <$> stdoutCall (Desc "locate <nixpkgs>")
   (Exec "nix-instantiate") ["--eval", "-E", "<nixpkgs>"]
 
+getNixpkgs ∷ IO Nixpkgs
+getNixpkgs = internHaskellNixpkgs =<< locateNixpkgs
+
+
+
 nixpkgsHackagePackagesTopAttrs ∷ Text → IO (Set Attr)
 nixpkgsHackagePackagesTopAttrs nixpkgs = do
   let file = nixpkgs <> "/pkgs/development/haskell-modules/hackage-packages.nix"
@@ -65,8 +70,9 @@ nixpkgsShadows (Attr attr) Nixpkgs{..} =
 attrDefined ∷ Attr → Nixpkgs → Bool
 attrDefined attr = Set.member attr ∘ nixpkgsHackagePackages
 
-attrShadowedAt ∷ Attr → Release → Nixpkgs → Bool
-attrShadowedAt attr release = (attrShadow attr release `Set.member`) ∘ nixpkgsHackagePackages
+attrShadowedAt ∷ Attr → Release → Nixpkgs → Maybe Attr
+attrShadowedAt attr release = justIf shadow ∘ (shadow `Set.member`) ∘ nixpkgsHackagePackages
+  where shadow = attrShadow attr release
 
 attrShadow ∷ Attr → Release → Attr
 attrShadow (Attr a) (Release r) = Attr $ a <> "_" <> T.map (charMap '.' '_')  r

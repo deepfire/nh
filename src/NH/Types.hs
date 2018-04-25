@@ -18,6 +18,7 @@ import           Data.Coerce                         (Coercible, coerce)
 import           Data.Hourglass.Epoch
 import           Data.Map                            (Map)
 import qualified Data.Map                         as Map
+import           Data.Maybe
 import qualified Data.Set                         as Set
 import           Data.String
 import           Data.Text
@@ -25,6 +26,7 @@ import           Data.Semigroup               hiding (All)
 import           Generics.SOP                        (Proxy)
 import qualified Generics.SOP                     as SOP
 import qualified GHC.Generics                     as GHC
+import qualified GHC.Types                        as Type
 import           Prelude                      hiding (length, drop)
 import           Prelude.Unicode
 import           Text.PrettyPrint.HughesPJClass      (Doc(..))
@@ -44,6 +46,7 @@ instance Functor Set.Set where
 
 
 newtype CtxName                 = CtxName                 { unCtxName             ∷ Text } deriving (Eq, IsString, Ord, Show)
+newtype PKGDBPath               = PKGDBPath               { fromPKGDBPath         ∷ Text } deriving (Eq, IsString, Ord, Show)
 
 attrCtx ∷ Attr     → CtxName
 repoCtx ∷ RepoName → CtxName
@@ -84,11 +87,11 @@ instance CFlag Disable        where
 instance CFlag Jailbreak      where
   data    Flag Jailbreak      = DoJailbreak     | DontJailbreak deriving (Bounded, Eq, Ord, Show)
 instance CFlag Revision       where
-  data    Flag Revision       = DoRevision      | KeepRevision  deriving (Bounded, Eq, Ord, Show)
+  data    Flag Revision       = DontRevision    | KeepRevision  deriving (Bounded, Eq, Ord, Show)
 instance CFlag Check          where
-  data    Flag Check          = DoCheck         | DontCheck     deriving (Bounded, Eq, Ord, Show)
+  data    Flag Check          = DontCheck       | DoCheck       deriving (Bounded, Eq, Ord, Show)
 instance CFlag Haddock        where
-  data    Flag Haddock        = DoHaddock       | DontHaddock   deriving (Bounded, Eq, Ord, Show)
+  data    Flag Haddock        = DontHaddock     | DoHaddock     deriving (Bounded, Eq, Ord, Show)
 
 
 
@@ -107,30 +110,51 @@ data SrcSpec
 data Nixpkgs = Nixpkgs
   { nixpkgsPath            ∷ Text
   , nixpkgsHackagePackages ∷ Set.Set Attr
-  }
+  } deriving (Eq)
+
+instance Show Nixpkgs where
+  show Nixpkgs{..} = "#<NIXPKGS \""<>unpack nixpkgsPath<>"\">"
 
 -- | Context type for PKGDB-oriented MRecord instances:
-type Ctx = (PKGDB, EName)
+type PKGCtx = (PKGDB, EName)
 
 newtype CName = CName { fromCName ∷ Text } deriving (Eq, Ord, Show)
 
-type instance ConsCtx Ctx = CName
+type instance ConsCtx PKGCtx = CName
+
+newtype GHCConfStatic = GHCConfStatic { fromGHCConfStatic ∷ Text } deriving (Eq, Ord, Show)
 
 data PKGDB = PKGDB
-  { pkgdbPath          ∷ Text
+  { pkgdbPath          ∷ PKGDBPath
   , pkgdbNixpkgs       ∷ Nixpkgs
-  }
+  , pkgdbGHCConfStatic ∷ GHCConfStatic
+  -- , pkgdbExtraAttrs    ∷ [Attr]
+  } deriving (GHC.Generic, Show)
+instance SOP.Generic         PKGDB
+instance SOP.HasDatatypeInfo PKGDB
+
+data OverPackage = OverPackage
+  { opAttr             ∷ Attr
+  , opMeta             ∷ Meta
+  , opOver             ∷ Overrides
+  , opNixpkgs          ∷ Nixpkgs
+  , opUpstream         ∷ Maybe Upstream
+  } deriving (Eq, GHC.Generic, Show)
+instance SOP.Generic         OverPackage
+instance SOP.HasDatatypeInfo OverPackage
 
 data Package = Package
   { pkAttr             ∷ Attr
-  , pkRepo             ∷ Maybe GithubRepo
+  , pkUpstream         ∷ Upstream
   , pkMeta             ∷ Meta
-  , pkOver             ∷ Overrides        -- ^ Carries overridable fields
+  , pkOver             ∷ Overrides            -- ^ Carries overridable fields
   , pkDrvFields        ∷ Map DrvField DFValue -- ^ Non-overridable fields only
   , pkDrvMeta          ∷ DrvMeta
   } deriving (Eq, GHC.Generic, Show)
 instance SOP.Generic         Package
 instance SOP.HasDatatypeInfo Package
+
+
 
 data DrvMeta = DrvMeta
   { dmLicense          ∷ Text
@@ -142,15 +166,15 @@ data DrvMeta = DrvMeta
 instance SOP.Generic         DrvMeta
 instance SOP.HasDatatypeInfo DrvMeta
 
-data GithubRepo = GithubRepo
-  { grRepoName         ∷ RepoName
-  , grUpstream         ∷ GithubUser
-  , grPr               ∷ Maybe GithubPR
-  , grIssue            ∷ Maybe GithubIssue
-  , grTimestamp        ∷ Maybe (ElapsedSince UnixEpoch)
+data Upstream = Upstream
+  { upRepoName         ∷ RepoName
+  , upUser             ∷ GithubUser
+  , upPr               ∷ Maybe GithubPR
+  , upIssue            ∷ Maybe GithubIssue
+  , upTimestamp        ∷ Maybe (ElapsedSince UnixEpoch)
   } deriving (Eq, GHC.Generic, Show)
-instance SOP.Generic         GithubRepo
-instance SOP.HasDatatypeInfo GithubRepo
+instance SOP.Generic         Upstream
+instance SOP.HasDatatypeInfo Upstream
 
 
 
@@ -183,6 +207,8 @@ data Src
 instance SOP.Generic         Src
 instance SOP.HasDatatypeInfo Src
 
+
+
 data Overrides = Overrides
   { ovSrc              ∷ Maybe Src
   , ovJailbreak        ∷ Flag Jailbreak
@@ -191,6 +217,7 @@ data Overrides = Overrides
   , ovDoHaddock        ∷ Flag Haddock
   , ovInputs           ∷ Map Attr Attr
   , ovDrvFields        ∷ Map DrvField DFValue -- ^ Overridable fields only
+  , ovPatches          ∷ [Patch]
   } deriving (Eq, GHC.Generic, Show)
 instance SOP.Generic         Overrides
 instance SOP.HasDatatypeInfo Overrides
@@ -204,6 +231,7 @@ instance Semigroup Overrides where
     , ovDoHaddock        =                  ovDoHaddock r
     , ovInputs           = ovInputs    l <> ovInputs    r
     , ovDrvFields        = ovDrvFields l <> ovDrvFields r
+    , ovPatches          = ovPatches   l <> ovPatches   r
     }
 
 instance Monoid Overrides where
@@ -213,9 +241,17 @@ instance Monoid Overrides where
     , ovRevision         = KeepRevision
     , ovDoCheck          = DoCheck
     , ovDoHaddock        = DoHaddock
-    , ovInputs           = Map.empty
-    , ovDrvFields        = Map.empty
+    , ovInputs           = mempty
+    , ovDrvFields        = mempty
+    , ovPatches          = []
     }
+
+data Patch = Patch
+  { paUrl    ∷ Text
+  , paSha256 ∷ Text
+  } deriving (Eq, GHC.Generic, Show)
+instance SOP.Generic         Patch
+instance SOP.HasDatatypeInfo Patch
 
 
 

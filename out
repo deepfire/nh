@@ -1,0 +1,310 @@
+{ pkgs, haskellLib, super, self }:
+
+with haskellLib;
+
+self: super: {
+  HTTP = overrideCabal super.HTTP (drv: {;
+    doCheck = true;
+  })
+  
+  adjunctions = overrideCabal super.adjunctions (drv: {;
+    jailbreak = true;
+  })
+  
+  async = overrideCabal super.async (drv: {;
+    jailbreak = true;
+  })
+  
+  bindings-GLFW = overrideCabal super.bindings-GLFW (drv: {;
+    jailbreak = true;
+  })
+  
+  blaze-builder = overrideCabal super.blaze-builder (drv: {;
+    src = fetchFromGithub {
+            owner = "bgamari";
+            repo = "blaze-builder";
+            rev = "b7195f160795a081adbb9013810d843f1ba5e062";
+            sha256 = "1g351fdpsvn2lbqiy9bg2s0wwrdccb8q1zh7gvpsx5nnj24b1c00";
+          };
+    jailbreak = true;
+  })
+  
+  boxes = overrideCabal super.boxes_0_1_5 (drv: {;
+    version = "0.1.5";
+    sha256 = "1hsnmw95i58d4bkpxby3ddsj1cawypw4mdyb18m393s5i8p7iq9q";
+  })
+  
+  bv = overrideCabal super.bv_0_5 (drv: {;
+    version = "0.5";
+    sha256 = "1nkvqwqcjl57p6ir0sllb54vbj6q0l3s3w7z3z2svxjq2ymqk884";
+  })
+  
+  bytestring-trie = overrideCabal super.bytestring-trie (drv: {;
+    src = fetchFromGithub {
+            owner = "RyanGlScott";
+            repo = "bytestring-trie";
+            rev = "e0ae0cb1ad40dedd560090d69cc36f9760797e29";
+            sha256 = "1jkdchvrca7dgpij5k4h1dy4qr1rli3fzbsqajwxmx9865rgiksl";
+          };
+    doCheck = true;
+  })
+  
+  cabal2nix = super.cabal2nix;
+  
+  constraints = overrideCabal super.constraints_0_10 (drv: {;
+    version = "0.10";
+    sha256 = "1ii6j62xihxwb85akvy8cdd73g9qr7rd5zl37h4925y2acpbh962";
+  })
+  
+  deepseq-generics = overrideCabal super.deepseq-generics (drv: {;
+    jailbreak = true;
+  })
+  
+  deriving-compat = overrideCabal super.deriving-compat_0_4_1 (drv: {;
+    version = "0.4.1";
+    sha256 = "0lzcbnvzcnrrvr61mrqdx4i8fylknf4jwrpncxr9lhpxgp4fqqk4";
+  })
+  
+  dhall = overrideCabal super.dhall (drv: {;
+    jailbreak = true;
+  })
+  
+  dhall-json = super.dhall-json;
+  
+  doctest = overrideCabal super.doctest_0_14_1 (drv: {;
+    version = "0.14.1";
+    sha256 = "1phnrsh2gjls54mlpqhfjs0x003jbrsz1sijy107mbg2gnck9cfj";
+    doCheck = true;
+  })
+  
+  either = overrideCabal super.either_5 (drv: {;
+    version = "5";
+    sha256 = "087lrgvyns9jfgi95rr2lliivxf7fsd4d0hzqzk80kx385vf5kkm";
+  })
+  
+  exception-transformers = overrideCabal super.exception-transformers (drv: {;
+    jailbreak = true;
+  })
+  
+  free = overrideCabal super.free_5_0_1 (drv: {;
+    version = "5.0.1";
+    sha256 = "16b29r9f9j7wpd99zbspkxq22rm6r2shqv1isa1ipqfbzn9bap5p";
+  })
+  
+  funcmp = overrideCabal super.funcmp_1_9 (drv: {;
+    version = "1.9";
+    sha256 = "1d5appkjhajb9ndv2gwnfz8lw2w53v8baajzmrhg26ihzj1bkch8";
+  })
+  
+  generics-sop = super.generics-sop;
+  
+  github = overrideCabal super.github (drv: {;
+    jailbreak = true;
+  })
+  
+  hackage-db = overrideCabal super.hackage-db_2_0_1 (drv: {;
+    version = "2.0.1";
+    sha256 = "13ggj72i8dxwh3qwznnqxbr00nvsbapyyhzx5zybfacddnpw3aph";
+  })
+  
+  hackage-security = overrideCabal super.hackage-security (drv: {;
+    src = fetchFromGithub {
+            owner = "haskell";
+            repo = "hackage-security";
+            rev = "21519f4f572b9547485285ebe44c152e1230fd76";
+            sha256 = "1ijwmps4pzyhsxfhc8mrnc3ldjvpisnmr457vvhgymwhdrr95k0z";
+          };
+    jailbreak = true;
+  })
+  
+  haddock-library = overrideCabal super.haddock-library_1_5_0_1 (drv: {;
+    version = "1.5.0.1";
+    sha256 = "1cmbg8l5xrwpliclwy3l057raypjqy0hsg1h1743ahaj8gq10b7z";
+    doCheck = true;
+    doHaddock = true;
+  })
+  
+  haddock-library_1_5_0_1 = overrideCabal super.haddock-library_1_5_0_1 (drv: {;
+    doCheck = true;
+    doHaddock = true;
+  })
+  
+  hashable-time = overrideCabal super.hashable-time (drv: {;
+    jailbreak = true;
+  })
+  
+  hashtables = super.hashtables;
+  
+  haskell-gi = super.haskell-gi;
+  
+  haskell-src-exts = overrideCabal super.haskell-src-exts_1_20_2 (drv: {;
+    version = "1.20.2";
+    sha256 = "1sm3z4v1p5yffg01ldgavz71s3bvfhjfa13k428rk14bpkl8crlz";
+  })
+  
+  haskell-src-meta = overrideCabal super.haskell-src-meta (drv: {;
+    jailbreak = true;
+  })
+  
+  hnix = overrideCabal super.hnix_0_4_0 (drv: {;
+    version = "0.4.0";
+    sha256 = "0rgx97ckv5zvly6x76h7nncswfw0ik4bhnlj8n5bpl4rqzd7d4fd";
+    jailbreak = true;
+  })
+  
+  hpack = super.hpack;
+  
+  hspec = overrideCabal super.hspec_2_4_8 (drv: {;
+    version = "2.4.8";
+    sha256 = "18pddkfz661b1nr1nziq8cnmlzxiqzzmrcrk3iwn476vi3bf1m4l";
+    doCheck = true;
+  })
+  
+  hspec-core = overrideCabal super.hspec-core_2_4_8 (drv: {;
+    version = "2.4.8";
+    sha256 = "02zr6n7mqdncvf1braf38zjdplaxrkg11x9k8717k4yg57585ji4";
+    doCheck = true;
+  })
+  
+  hspec-discover = overrideCabal super.hspec-discover_2_4_8 (drv: {;
+    version = "2.4.8";
+    sha256 = "0llwdfpjgfpi7dr8caw0fldb9maqznmqh4awkvx72bz538gqmlka";
+  })
+  
+  http-api-data = overrideCabal super.http-api-data (drv: {;
+    src = fetchFromGithub {
+            owner = "fizruk";
+            repo = "http-api-data";
+            rev = "83aac9540f4a304927c601c5db12f4dc2bf93816";
+            sha256 = "14hy13szr09vsisxi25a4qfajqjwznvn222bqk55dcdlnrgf0zi9";
+          };
+    jailbreak = true;
+  })
+  
+  kan-extensions = overrideCabal super.kan-extensions (drv: {;
+    jailbreak = true;
+  })
+  
+  keys = overrideCabal super.keys (drv: {;
+    jailbreak = true;
+  })
+  
+  lambdacube-compiler = super.lambdacube-compiler;
+  
+  lambdacube-gl = overrideCabal super.lambdacube-gl (drv: {;
+    jailbreak = true;
+  })
+  
+  lambdacube-ir = super.lambdacube-ir;
+  
+  lens = overrideCabal super.lens_4_16 (drv: {;
+    version = "4.16";
+    sha256 = "16wz3s62zmnmis7xs9jahyc7b75090b96ayk98c3gvzmpg7bx54z";
+  })
+  
+  lifted-async = overrideCabal super.lifted-async (drv: {;
+    jailbreak = true;
+  })
+  
+  monadplus = super.monadplus;
+  
+  newtype-generics = overrideCabal super.newtype-generics (drv: {;
+    jailbreak = true;
+  })
+  
+  nh = super.nh;
+  
+  protolude = overrideCabal super.protolude (drv: {;
+    jailbreak = true;
+  })
+  
+  rapid = overrideCabal super.rapid (drv: {;
+    jailbreak = true;
+  })
+  
+  reflex = overrideCabal super.reflex (drv: {;
+    src = fetchFromGithub {
+            owner = "deepfire";
+            repo = "reflex";
+            rev = "4fb50139db45a37493b91973eeaad9885b4c63ca";
+            sha256 = "0i7pp6cw394m2vbwcqv9z5ngdarp01sabqr1jkkgchxdkkii94nx";
+          };
+    jailbreak = true;
+    doHaddock = true;
+  })
+  
+  regex-tdfa = overrideCabal super.regex-tdfa_1_2_3 (drv: {;
+    version = "1.2.3";
+    sha256 = "1n80ssz9k73s444b4hda6fhp1vyzg0fc5fvz0309fi9dh6xpxcc9";
+  })
+  
+  resolv = overrideCabal super.resolv (drv: {;
+    doCheck = true;
+  })
+  
+  semigroupoids = overrideCabal super.semigroupoids_5_2_2 (drv: {;
+    version = "5.2.2";
+    sha256 = "17i96y4iqj8clcs090lf6k0ij3j16nj14vsfwz0mm9nd6i4gbpp4";
+  })
+  
+  setlocale = overrideCabal super.setlocale (drv: {;
+    jailbreak = true;
+  })
+  
+  simple-reflect = super.simple-reflect;
+  
+  singletons = super.singletons;
+  
+  stylish-cabal = overrideCabal super.stylish-cabal (drv: {;
+    doHaddock = true;
+  })
+  
+  tasty = super.tasty;
+  
+  tasty-expected-failure = overrideCabal super.tasty-expected-failure (drv: {;
+    jailbreak = true;
+  })
+  
+  tasty-hedgehog = overrideCabal super.tasty-hedgehog (drv: {;
+    jailbreak = true;
+  })
+  
+  test-framework = overrideCabal super.test-framework_0_8_2_0 (drv: {;
+    version = "0.8.2.0";
+    sha256 = "1hhacrzam6b8f10hyldmjw8pb7frdxh04rfg3farxcxwbnhwgbpm";
+    doCheck = true;
+  })
+  
+  text-format = super.text-format;
+  
+  text-lens = overrideCabal super.text-lens (drv: {;
+    jailbreak = true;
+    doCheck = true;
+  })
+  
+  th-desugar = super.th-desugar;
+  
+  tree-diff = overrideCabal super.tree-diff (drv: {;
+    jailbreak = true;
+  })
+  
+  turtle = super.turtle;
+  
+  unordered-containers = overrideCabal super.unordered-containers_0_2_9_0 (drv: {;
+    version = "0.2.9.0";
+    sha256 = "0l4264p0av12cc6i8gls13q8y27x12z2ar4x34n3x59y99fcnc37";
+  })
+  
+  vector-algorithms = overrideCabal super.vector-algorithms (drv: {;
+    doCheck = true;
+  })
+  
+  wavefront = overrideCabal super.wavefront (drv: {;
+    jailbreak = true;
+  })
+  
+  websockets = super.websockets;
+  
+  wl-pprint-text = super.wl-pprint-text;
+  
+}

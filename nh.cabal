@@ -20,6 +20,7 @@ library
                      , NH.Emission
                      , NH.FS
                      , NH.Github
+                     , NH.Logic
                      , NH.Misc
                      , NH.Nix
                      , NH.PKGDB

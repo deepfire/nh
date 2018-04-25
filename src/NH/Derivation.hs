@@ -94,7 +94,6 @@ import Text.PrettyPrint.HughesPJClass ( Doc, Pretty(..), text, vcat, hcat, semi 
 
 import           NH.Config                             (Config(..))
 import qualified NH.Config                          as CFG
-import           NH.Emission
 import           NH.Misc
 import           NH.Nix
 import           NH.Types
@@ -141,12 +140,12 @@ internDerivation drv sspec =
       meTargets          = ToLocal
       pkMeta             = Meta{..}
 
-      grRepoName         = ssRepoName
-      grIssue            = Nothing
-      grPr               = Nothing
-      grTimestamp        = Nothing -- XXX: loss
-      grUpstream         = ssUser
-      pkRepo             = Just GithubRepo{..}
+      upRepoName         = ssRepoName
+      upUser             = ssUser
+      upIssue            = Nothing
+      upPr               = Nothing
+      upTimestamp        = Nothing -- XXX: loss
+      pkUpstream         = Upstream{..}
 
       ghRev              = GitRef $ pack $ derivRevision $ drv^.src
       srNixHash          = NixHash $ pack $ derivHash $ drv^.src
@@ -163,6 +162,7 @@ internDerivation drv sspec =
       ovJailbreak        = DontJailbreak
       ovRevision         = KeepRevision
       ovSrc              = Just pkSrc
+      ovPatches          = mempty
       pkOver             = Overrides{..}
 
       dmDescription      = showDocOneLine ∘ flip pprintField DFmetaSectionDescription <$>

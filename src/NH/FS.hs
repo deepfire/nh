@@ -14,6 +14,7 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
@@ -30,13 +31,16 @@
 {-# LANGUAGE UnicodeSyntax #-}
 
 module NH.FS
-  ( init, open
-  , list, listCtx
+  ( init, validate
+  , PKGDBSpec(..)
+  , list, listCtx, listField', listField
   , has
   , read
   , write, rm
   )
 where
+
+import           GHC.Stack
 
 import           Control.Exception
 import           Control.Lens                        ((<&>))
@@ -95,15 +99,16 @@ l <.> r = l <> T.singleton '.' <> r
 
 
 init ∷ [CName] → Text → IO PKGDB
-init allCNames pkgdbPath = Sys.withSystemTempDirectory "nh-temp" $
+init allCNames path = Sys.withSystemTempDirectory "nh-temp" $
   \((</> "new") ∘ pack → assyPath) → do
-    initDBat $ unpack pkgdbPath
+    initDBat $ unpack path
     -- Unfortunately, the create-then-rename trick is useless,
     -- as /tmp is often on a different filesystem from the target.
     -- And so the move is neither atomic, neither supported by renamePath.
     --
     -- Sys.renamePath (unpack assyPath) (unpack pkgdbPath)
-    pkgdbNixpkgs ← (Nix.internHaskellNixpkgs =<< Nix.locateNixpkgs)
+    pkgdbNixpkgs ← Nix.getNixpkgs
+    let pkgdbPath = PKGDBPath path
     pure PKGDB{..}
       where
         initDBat dir = do
@@ -115,18 +120,15 @@ init allCNames pkgdbPath = Sys.withSystemTempDirectory "nh-temp" $
           forM_ allCNames $ \(CName cn)→
             Sys.createDirectory $ dir Sys.</> unpack cn
 
-open ∷ [CName] → Text → IO (Maybe PKGDB)
-open allCNames path = do
-  valid ← foldM (\acc sub→ (acc ∧) <$> Sys.doesDirectoryExist (unpack $ path </> sub))
-    True (fromCName <$> allCNames)
-  if valid
-    then do -- printf "Found valid PKGDB at:  %s\n" $ unpack path
-            nixpkgs ← Nix.internHaskellNixpkgs =<< Nix.locateNixpkgs
-            pure $ Just $ PKGDB path nixpkgs
-    else pure Nothing
+newtype PKGDBSpec = FSDBPath { fromFSDBPath ∷ Text }
+
+validate ∷ [CName] → PKGDBSpec → IO Bool
+validate allCNames (FSDBPath path) =
+  foldM (\acc sub→ (acc ∧) <$> Sys.doesDirectoryExist (unpack $ path </> sub))
+  True (fromCName <$> allCNames)
 
 cnPath ∷ PKGDB → CName → Text
-cnPath PKGDB{..} (CName cn) = pkgdbPath </> cn
+cnPath PKGDB{pkgdbPath=(PKGDBPath path)} (CName cn) = path </> cn
 
 path ∷ CName → CtxName → Field → PKGDB → Text
 path cn (CtxName en) (Field fi) db =
@@ -181,6 +183,14 @@ list cn db = do
 listCtx ∷ CName → CtxName → PKGDB → IO [Text]
 listCtx cn (CtxName en) db = listCName cn db <&>
   (drop (length en + 1) <$>) ∘ filter (T.isPrefixOf (en <> "."))
+
+listField' ∷ CName → CtxName → Field → PKGDB → IO [Text]
+listField' cn en (Field f) db =
+  filter (T.isPrefixOf (f  <> ".")) <$> listCtx cn en db
+
+listField ∷ CName → CtxName → Field → PKGDB → IO [Text]
+listField cn en fi@(Field f) =
+  ((drop (length f  + 1) <$>) <$>) ∘ listField' cn en fi
 
 
 

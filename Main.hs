@@ -3,10 +3,13 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE UnicodeSyntax #-}
 
 module Main
 where
+
+import           GHC.Stack
 
 import           Control.Monad                       (forM_, unless)
 import           Control.Monad.Plus                  (partial)
@@ -81,6 +84,7 @@ import Language.Nix
 -- import System.IO ( hFlush, hPutStrLn, stdout, stderr )
 import qualified Text.PrettyPrint.ANSI.Leijen as P2
 import Text.PrettyPrint.HughesPJClass ( Doc, Pretty(..), text, vcat, hcat, semi )
+import qualified Turtle as SH
 
 -- #if MIN_VERSION_base(4,11,0)
 -- import Distribution.PackageDescription ( unFlagAssignment, mkFlagAssignment )
@@ -91,6 +95,7 @@ import           NH.Derivation
 import           NH.Emission
 import           NH.Misc
 import           NH.Nix
+import qualified NH.FS                              as PKGDB hiding (open)
 import qualified NH.PKGDB                           as PKGDB
 import           NH.Types
 
@@ -101,8 +106,9 @@ import           NH.PKGDB                       hiding (parse, path)
 
 data Cmd
   = DumpConfig
-  | InternDef     SrcSpec
-  | EmitDef      (Maybe Attr)
+  | InternDef      SrcSpec
+  | EmitDef       (Maybe Attr)
+  | EmitGHCConfig
   deriving (Show)
 
 data Options = Options
@@ -165,6 +171,10 @@ commandParser = subparser
       (EmitDef
        <$> optional (argument str (metavar "ATTR"))
        <**> helper))
+ <> command "ghc-config"
+    (flip info (progDesc "Emit a Nix GHC configuration from PKGDB")
+      (pure EmitGHCConfig
+       <**> helper))
   )
 
 
@@ -187,6 +197,9 @@ withFull action = do
     fromMaybe (error $ printf "Config %s specifies malformed PKGDB at:  %s" cfPath _cPKGDB)
   action cfg db
 
+getDB ∷ IO PKGDB
+getDB = withFull (\_→pure)
+
 
 
 run ∷ Cmd → IO ()
@@ -202,7 +215,7 @@ execute opts DumpConfig cfg@Config{..} PKGDB{..} = do
   print cfg
   print opts
   echoT $ "Config at: " <> _cConfig
-  echoT $ "PKGDB at:  " <> pkgdbPath
+  echoT $ "PKGDB at:  " <> fromPKGDBPath pkgdbPath
 execute opts@Options{..} (InternDef sspec) cfg db = do
   drv ← getDerivation oCompiler oSystem sspec
   let pk = internDerivation drv sspec
@@ -229,8 +242,8 @@ execute opts@Options{..} (InternDef sspec) cfg db = do
       print $ pkMeta pk'
 execute opts (EmitDef mattr) cfg db = do
   attrs ← case mattr of
-            Just attr → pure $ Set.singleton attr
-            Nothing   → PKGDB.readFulldefnNames db -- XXX: switch to status-based set construction
+            Just attr → pure [attr]
+            Nothing   → PKGDB.listFulldefns db -- XXX: switch to status-based set construction
   forM_ attrs $
     \attr→ do
       pk ∷ Package ← recover (db, fromAttr attr)
@@ -238,3 +251,12 @@ execute opts (EmitDef mattr) cfg db = do
         [ text (unpack $ fromAttr attr) <+> equals
         , pPrint pk <> semi ]
       -- print $ text (unpack $ fromAttr attr) <+> equals <+> pPrint fulldef
+execute opts (EmitGHCConfig) cfg db = do
+  opNames ← listOverPackages db
+  overs ← readOverPackages db
+  let doc  = withTarget ToNixpkgs $ nest 2 $ vcat $ filter (≢ mempty) $ ($+$ "") ∘ pPrint <$> Map.elems overs
+      text = pack $ show doc
+  print doc
+  SH.writeTextFile "out" text
+  SH.shell "diff -uN --color /home/deepfire/nixpkgs/pkgs/development/haskell-modules/configuration-ghc-8.4.x.nix out" mempty
+  pure ()
