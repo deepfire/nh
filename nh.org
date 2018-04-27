@@ -445,7 +445,7 @@ lsattrs() {
         local NAME="$1"; shift
 
         pushd ${PKGDB}/${TYPE} >/dev/null
-        ls -1 * 2>/dev/null | grep "^$NAME\\." | grep -v "\\.\(baseline$\|input\\.\)" | keep_after_first_dot
+        ls -1 * 2>/dev/null | grep "^$NAME\\." | grep -v "\\.baseline$" | keep_after_first_dot
         popd >/dev/null
 }
 lsovers() {
@@ -1533,13 +1533,26 @@ emit_patches() {
         cat <<EOF
     patches = (drv.patches or []) ++ [
 EOF
-        while read sha256 url
-        do cat <<EOF
+        while read kind arg1 arg2
+        do case ${kind} in
+                   fetchpatch )
+                           local sha256=${arg1} url=${arg2}
+                           cat <<EOF
       (pkgs.fetchpatch
        { url    = ${url};
          sha256 = "${sha256}";
        })
 EOF
+                           ;;
+                   file )
+                           local file=${arg1}
+                           cat <<EOF
+      ./${file}
+EOF
+                           ;;
+                   * )
+                           fail "unknown patch kind: ${kind}";;
+           esac
         done < $(path def/over patches ${attr})
         cat <<EOF
     ];
@@ -1910,7 +1923,7 @@ override_builder() {
            in --print-drv )            print_drv="--print-drv";;
               --quiet )                quiet="--quiet";;
               "--"* )                  fail "$0: unknown option: $1";;
-              ,* )                      break;;
+              * )                      break;;
            esac
            shift
         done
@@ -2277,7 +2290,7 @@ trim_attribute() {
         else echo "FAILED"
         fi
 
-        for  over in $(lsattrs def/over ${attr})
+        for  over in $(lsattrs def/over ${attr} | grep -v 'input\.')
         do trim_override ${attr} ${over}
         done
         for iover in $(lsiovers         ${attr})
@@ -2404,7 +2417,7 @@ audit_one() {
 
         local overrides="$(lsattrs def/over ${attr})"
 
-        ## 1. Proof of necessity exists
+        ## 1. Proof of necessity exists -- XXX: input overrides need pointwise treatment
         local status=0
         for over in ${overrides}
         do if ! emit_explanation ${over} ${attr} >/dev/null
@@ -2754,7 +2767,8 @@ section "${title}" \
          remove ls-over ls-input-overs get set edit setio \
          dontRevision check dontCheck haddock dontHaddock jailbreak dontJailbreak libraryHaskell add-patch;; ## No need for many similary help entries
 
-remove )           HELP "remove ATTR[.OVER]"      "Remove specified overrides" || return 0
+remove | delete | drop )
+                   HELP "remove ATTR[.OVER]"      "Remove specified overrides" || return 0
                    APPLY_ATTR
                    local over="${1:+.$1}"
                    remove "$OP_ATTR" "${over}";;
@@ -2826,7 +2840,12 @@ patch | add-patch )
                    APPLY_ATTR
                    local sha256="$1"; shift
                    local url="$1";    shift
-                   echo "${sha256} ${url}" >> $(path def/over patches ${OP_ATTR});;
+                   echo "fetchpatch ${sha256} ${url}" >> $(path def/over patches ${OP_ATTR});;
+file-patch | add-file-patch )
+                   HELP "add-file-patch ATTR FILE" "Add a file-based patch to ATTR" || return 0
+                   APPLY_ATTR
+                   local file="$1"; shift
+                   echo "file ${file}" >> $(path def/over patches ${OP_ATTR});;
 #+end_src
 *** Status
   #+begin_src sh :var title=(org-tangle-item)
@@ -3207,13 +3226,14 @@ diff | nixpkgs-diff )
                    HELP "nixpkgs-diff [(base-head|base-master|head-master] [REF]" \
                                                    "Diff of current GHC configuration" || return 0
                    local kind="${1:-base-head}" diffspec=; shift
-                   local ref="${1:-HEAD}" clean=
+                   local toref="${1:-peti/haskell-updates}"
+                   local fromref="${2:-HEAD}" clean=
                    case "${kind}" in
                           tree )        fetch=  diffspec=;;
                           tree-essence )fetch=  diffspec=  clean=y;;
-                          base-head )   fetch=  diffspec="$(git -C "${NIXPKGS}" merge-base HEAD origin/master) HEAD";;
-                          base-master ) fetch=y diffspec="$(git -C "${NIXPKGS}" merge-base HEAD origin/master) origin/master";;
-                          to-master )   fetch=y diffspec="${ref} origin/master";;
+                          base-head )   fetch=  diffspec="$(git -C "${NIXPKGS}" merge-base ${fromref} ${toref}) ${fromref}";;
+                          base-master ) fetch=y diffspec="$(git -C "${NIXPKGS}" merge-base ${fromref} ${toref}) ${toref}";;
+                          to-master )   fetch=y diffspec="${fromref} ${toref}";;
                           * ) fail "unknown diff kind '${kind}'.  Expected one of: tree, base-head, base-master, to-master";;
                    esac
                    test -z "${fetch}" ||
