@@ -1714,7 +1714,7 @@ emit_overrides() {
            in --emit-acme )            emit_acme="--emit-acme";;
               --format )               format=$2; shift;;
               --output-hint )          output_hint=$2; shift;;
-              --reuse-cache )          reuse_cache="--reuse-cache";;
+              --reuse-cache | -c )     reuse_cache="--reuse-cache";;
               --require-descs )        require_descs="--require-descs";;
               --quiet )                quiet="--quiet";;
               --target )               case "$2" in
@@ -2093,7 +2093,7 @@ instantiate() {
         local reuse_cache= debug=
         while test $# -ge 1
         do case "$1"
-           in --reuse-cache )          reuse_cache="reuse-cache";;
+           in --reuse-cache | -c )     reuse_cache="reuse-cache";;
               --debug )                debug="--debug"; enable_debug;;
               "--"* )                  fail "$0: unknown option: $1";;
               * )                      break;;
@@ -2129,7 +2129,7 @@ build() {
         do case "$1"
            in --limit-to-self )        limit_to_self="--limit-to-self";;
               --print-drv )            print_drv="--print-drv";;
-              --reuse-cache )          reuse_cache="--reuse-cache";;
+              --reuse-cache | -c )     reuse_cache="--reuse-cache";;
               --reuse-overrides )      reuse_overrides="--reuse-overrides";;
               --debug )                enable_debug;;
               --quiet )                quiet="--quiet";;
@@ -2156,7 +2156,7 @@ acme() {
         local reuse_cache= reuse_overrides=
         while test $# -ge 1
         do case "$1"
-           in --reuse-cache )          reuse_cache="--reuse-cache";;
+           in --reuse-cache | -c )     reuse_cache="--reuse-cache";;
               --reuse-overrides )      reuse_overrides="--reuse-overrides";;
               "--"* )                  fail "$0: unknown option: $1";;
               * )                      break;;
@@ -2308,7 +2308,7 @@ trim() {
         local reuse_cache= since=
         while test $# -ge 1
         do case "$1"
-           in --reuse-cache )          reuse_cache="--reuse-cache";;
+           in --reuse-cache | -c )     reuse_cache="--reuse-cache";;
               --since )                since="$2"; shift;;
               "--"* )                  fail "$0: unknown option: $1";;
               * )                      break;;
@@ -2574,7 +2574,7 @@ audit() {
         while test $# -ge 1
         do case "$1"
            in --skip-acme )            skip_acme="--skip-acme";;
-              --reuse-cache )          reuse_cache="--reuse-cache";;
+              --reuse-cache | -c )     reuse_cache="--reuse-cache";;
               --reuse-overrides )      reuse_overrides="--reuse-overrides";;
               --autofix )              autofix="--autofix";;
               "--"* )                  fail "$0: unknown option: $1";;
@@ -2961,7 +2961,7 @@ o | over | override | show-override )
                    emit_override "$1";;
 
 a | overrides | apply )
-                   HELP "apply [--reuse-cache]" \
+                   HELP "apply [--reuse-cache | -c]" \
                            "Apply all overrides via ${NIX_GHC_OVERRIDES}" || return 0
                    apply "$@";;
 
@@ -3229,7 +3229,7 @@ git )              HELP "git OPTIONS.. ARGS.."   "Run git inside controlled Nixp
 diff | nixpkgs-diff )
                    HELP "nixpkgs-diff [(base-head|base-master|head-master] [REF]" \
                                                    "Diff of current GHC configuration" || return 0
-                   local kind="${1:-base-head}" diffspec=; shift
+                   local kind="${1:-tree}" diffspec=; shift
                    local toref="${1:-peti/haskell-updates}"
                    local fromref="${2:-HEAD}" clean=
                    case "${kind}" in
