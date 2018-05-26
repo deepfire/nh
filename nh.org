@@ -1533,7 +1533,9 @@ emit_patches() {
         cat <<EOF
     patches = (drv.patches or []) ++ [
 EOF
-        while read kind arg1 arg2
+        {
+        read kind arg1 arg2
+        while test -n "$kind"
         do case ${kind} in
                    fetchpatch )
                            local sha256=${arg1} url=${arg2}
@@ -1553,7 +1555,9 @@ EOF
                    * )
                            fail "unknown patch kind: ${kind}";;
            esac
-        done < $(path def/over patches ${attr})
+           read kind arg1 arg2
+        done
+        } < $(path def/over patches ${attr})
         cat <<EOF
     ];
 EOF
