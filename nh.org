@@ -404,6 +404,88 @@ nix_drv_inputs() {
 }
 
 #+END_SRC
+* Network
+*** endpoint-head/body/field
+#+BEGIN_SRC sh
+endpoint_body() {
+        curl --silent    $(url "$@")
+}
+endpoint_head() {
+        curl --silent -I $(url "$@")
+}
+endpoint_test_status() {
+        local status="$1"; shift
+        endpoint_head "$@" | grep -q "${status}"
+        test ${PIPESTATUS[0]} = 0 -a ${PIPESTATUS[1]} = 0
+}
+endpoint_field() {
+        local field="$1"; shift
+        endpoint_head "$@" | grep "^${field}: " | cut -d' ' -f2-
+        test ${PIPESTATUS[0]} = 0
+}
+#+END_SRC
+*** url
+    #+BEGIN_SRC sh
+prOrFail() {
+        local repo="$1"
+        get def/github pr $repo || {
+                echo "FATAL:  pull-request not specified for github repo '${repo}'" >&2
+                fail " logs:  get def/github pr ${repo}"
+        }
+}
+issueOrFail() {
+        local repo="$1"
+        get def/github issue $repo || {
+                echo "FATAL:  issue ID not specified for github repo '${repo}'" >&2
+                fail " logs:  get def/github issue ${repo}"
+        }
+}
+upstreamOrFail() {
+        local _attr="$1"
+        upstream "${_attr}" ||
+             fail "unable to deduce upstream for '${_attr}'"
+}
+url() {
+        local KIND="$1"; shift
+        local attr="$1"; shift
+
+        local subpath= gitrev=master pull_request= issue= release=
+        while test $# -ge 1
+        do case "$1"
+           in --gitrev )               gitrev="$2";  shift;;
+              --pull-request )         pull_request="$2";  shift;;
+              --issue )                issue="$2";  shift;;
+              --release )              release="$2"; shift;;
+              "--"* )                  fail "$0: unknown option: $1";;
+              * )     break;;
+           esac
+           shift
+        done
+
+        local repo="$(repoName "${attr}")"
+        case "${KIND}" in
+                upstream-github-cabal )      local upstream="$(upstream "${attr}")"
+                                             repo="$(repoName "${attr}")"
+                                             echo -n "https://raw.githubusercontent.com/$(upstreamOrFail   $attr)/$repo/${gitrev}/$(get_def def/meta chdir $attr '')/$attr.cabal";;
+                user-github-cabal )          echo -n "https://raw.githubusercontent.com/$(repo_fixer $repo)/$repo/${gitrev}/$(get_def def/meta chdir $attr '')/$attr.cabal";;
+                upstream-github )            echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo";;
+                upstream-pulls )             echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/pulls";;
+                user-github )                echo -n "https://github.com/$(               repo_fixer $repo)/$repo";;
+                self-github )                echo -n                    "git@github.com:$(echo   $GITHUB_USER)/$repo";;
+                upstream-pull-request )      echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/pull/$(prOrFail $repo)";;
+                upstream-issue )             echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/issues/$(issueOrFail $repo)";;
+                commits | upstream-commits ) echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/commits/master";;
+                user-commits )               echo -n "https://github.com/$(               repo_fixer $repo)/$repo/commits/master";;
+                hackage )                    echo -n "https://hackage.haskell.org/package/$attr";;
+                hackage-package )            echo -n "https://hackage.haskell.org/package/$attr-$release/$attr-$release.tar.gz";;
+                hackage-cabal )              echo -n "https://hackage.haskell.org/package/$attr/src/$attr.cabal";;
+                pull-merged )                echo -n "https://api.github.com/repos/$(     repo_fixer $repo)/$repo/pulls/$(prOrFail $repo)/merge";;
+                commit )                     echo -n "https://api.github.com/repos/$(     repo_fixer $repo)/$repo/commits?sha=${gitrev}";;
+                github-requests-remaining )  echo -n "https://api.github.com/rate_limit";;
+                * ) fail "invalid URL kind: '$KIND'";;
+        esac
+}
+    #+END_SRC
 * PKGDB
 
   PKGDB records per-attribute overrides and extended package metadata.
@@ -797,88 +879,6 @@ attr_override_drv_src() {
         nix_drv_src ${PKGDB}/${DRVTY}/${attr}.${over}
 }
     #+END_SRC
-*** Network
-***** endpoint-head/body/field
-  #+BEGIN_SRC sh
-endpoint_body() {
-        curl --silent    $(url "$@")
-}
-endpoint_head() {
-        curl --silent -I $(url "$@")
-}
-endpoint_test_status() {
-        local status="$1"; shift
-        endpoint_head "$@" | grep -q "${status}"
-        test ${PIPESTATUS[0]} = 0 -a ${PIPESTATUS[1]} = 0
-}
-endpoint_field() {
-        local field="$1"; shift
-        endpoint_head "$@" | grep "^${field}: " | cut -d' ' -f2-
-        test ${PIPESTATUS[0]} = 0
-}
-  #+END_SRC
-***** url
-      #+BEGIN_SRC sh
-prOrFail() {
-        local repo="$1"
-        get def/github pr $repo || {
-                echo "FATAL:  pull-request not specified for github repo '${repo}'" >&2
-                fail " logs:  get def/github pr ${repo}"
-        }
-}
-issueOrFail() {
-        local repo="$1"
-        get def/github issue $repo || {
-                echo "FATAL:  issue ID not specified for github repo '${repo}'" >&2
-                fail " logs:  get def/github issue ${repo}"
-        }
-}
-upstreamOrFail() {
-        local _attr="$1"
-        upstream "${_attr}" ||
-             fail "unable to deduce upstream for '${_attr}'"
-}
-url() {
-        local KIND="$1"; shift
-        local attr="$1"; shift
-
-        local subpath= gitrev=master pull_request= issue= release=
-        while test $# -ge 1
-        do case "$1"
-           in --gitrev )               gitrev="$2";  shift;;
-              --pull-request )         pull_request="$2";  shift;;
-              --issue )                issue="$2";  shift;;
-              --release )              release="$2"; shift;;
-              "--"* )                  fail "$0: unknown option: $1";;
-              * )     break;;
-           esac
-           shift
-        done
-
-        local repo="$(repoName "${attr}")"
-        case "${KIND}" in
-                upstream-github-cabal )      local upstream="$(upstream "${attr}")"
-                                             repo="$(repoName "${attr}")"
-                                             echo -n "https://raw.githubusercontent.com/$(upstreamOrFail   $attr)/$repo/${gitrev}/$(get_def def/meta chdir $attr '')/$attr.cabal";;
-                user-github-cabal )          echo -n "https://raw.githubusercontent.com/$(repo_fixer $repo)/$repo/${gitrev}/$(get_def def/meta chdir $attr '')/$attr.cabal";;
-                upstream-github )            echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo";;
-                upstream-pulls )             echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/pulls";;
-                user-github )                echo -n "https://github.com/$(               repo_fixer $repo)/$repo";;
-                self-github )                echo -n                    "git@github.com:$(echo   $GITHUB_USER)/$repo";;
-                upstream-pull-request )      echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/pull/$(prOrFail $repo)";;
-                upstream-issue )             echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/issues/$(issueOrFail $repo)";;
-                commits | upstream-commits ) echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/commits/master";;
-                user-commits )               echo -n "https://github.com/$(               repo_fixer $repo)/$repo/commits/master";;
-                hackage )                    echo -n "https://hackage.haskell.org/package/$attr";;
-                hackage-package )            echo -n "https://hackage.haskell.org/package/$attr-$release/$attr-$release.tar.gz";;
-                hackage-cabal )              echo -n "https://hackage.haskell.org/package/$attr/$attr.cabal";;
-                pull-merged )                echo -n "https://api.github.com/repos/$(     repo_fixer $repo)/$repo/pulls/$(prOrFail $repo)/merge";;
-                commit )                     echo -n "https://api.github.com/repos/$(     repo_fixer $repo)/$repo/commits?sha=${gitrev}";;
-                github-requests-remaining )  echo -n "https://api.github.com/rate_limit";;
-                * ) fail "invalid URL kind: '$KIND'";;
-        esac
-}
-      #+END_SRC
 *** Removal
 ***** remove
     #+BEGIN_SRC sh
