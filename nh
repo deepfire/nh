@@ -1582,7 +1582,7 @@ EOF
 
 global_output_cleanup_filter() {
         sed "s|/nix/store/[0-9a-z]-|/nix/store/HASH-|g; s|${NIXPKGS}|nixpkgs:/|" |
-                grep -v "cannot build derivation"
+                grep -v "cannot build derivation\|builder for .* failed with exit code\|build of '/nix/store/.*.drv' failed"
 }
 
 emit_overrides() {
