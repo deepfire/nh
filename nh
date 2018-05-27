@@ -3010,22 +3010,27 @@ diff | nixpkgs-diff )
                                                    "Diff of current GHC configuration (default is 'tree')" || return 0
                    local kind="${1:-tree}" diffspec=
                    local toref="${1:-peti/haskell-updates}"
-                   local fromref="${2:-HEAD}" clean=
+                   local fromref="${2:-HEAD}" clean=cat sort=cat
                    case "${kind}" in
-                          tree )                   fetch=  diffspec=;;
-                          tree-essence | ess | e ) fetch=  diffspec=  clean=y;;
-                          base-head )   fetch=  diffspec="$(git -C "${NIXPKGS}" merge-base ${fromref} ${toref}) ${fromref}";;
-                          base-master ) fetch=y diffspec="$(git -C "${NIXPKGS}" merge-base ${fromref} ${toref}) ${toref}";;
-                          to-master )   fetch=y diffspec="${fromref} ${toref}";;
+                          tree )
+                                  fetch=  diffspec=;;
+                          tree-essence | ess | e )
+                                  fetch=  diffspec=  clean='grep -v "^\([+-][ ]*#\|^[ @]\|diff --git\|index \|--- \|+++ \)"';;
+                          package-delta )
+                                  fetch=  diffspec=  clean='grep -v "^\([+-][ ]*#\|^[ @]\|diff --git\|index \|--- \|+++ \|[^=]*$\|.*\(url\|src\|sha256\|patches\|Depends\|owner\|repo\|rev\|prePatch\|jailbreak\|version\|doCheck\)[ ]*=\)"'
+                                  sort="sort -t' ' -k 2";;
+                          base-head )
+                                  fetch=  diffspec="$(git -C "${NIXPKGS}" merge-base ${fromref} ${toref}) ${fromref}";;
+                          base-master )
+                                  fetch=y diffspec="$(git -C "${NIXPKGS}" merge-base ${fromref} ${toref}) ${toref}";;
+                          to-master )
+                                  fetch=y diffspec="${fromref} ${toref}";;
                           * ) fail "unknown diff kind '${kind}'.  Expected one of: tree, base-head, base-master, to-master, tree, tree-essence";;
                    esac
                    if test -n "${fetch}"
                    then git -C "${NIXPKGS}" fetch origin
                    fi
-                   if test -n "${clean}"
-                   then git -C "${NIXPKGS}" diff ${diffspec} ${GHC_CONFIG_FULL_PATH} | grep -v '^\([+-][ ]*#\|^[ @]\|diff --git\|index \|--- \|+++ \)'
-                   else git -C "${NIXPKGS}" diff ${diffspec} ${GHC_CONFIG_FULL_PATH}
-                   fi;;
+                   git -C "${NIXPKGS}" diff ${diffspec} ${GHC_CONFIG_FULL_PATH} | eval ${clean} | eval ${sort};;
 
 mentions | nixpkgs-mentions )
                    HELP "nixpkgs-mentions"       "Shell with current GHC" || return 0
