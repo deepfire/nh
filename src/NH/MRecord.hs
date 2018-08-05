@@ -216,7 +216,14 @@ recover  ∷ ∀ a ctx xss. (CtxRecord ctx a, HasDatatypeInfo a, Code a ~ xss, A
          ⇒ ctx → IO a
 recover ctx = do
   to <$> (hsequence =<<
-          (!!)        (SOP.apInjs_POP  $ recover' p ctx $ datatypeInfo p) <$> restoreChoice ctx p)
+         -- XXXXXXXXXXXXXXXXXXXX: so, here's the theory:
+         -- a successful state loop needs an unobscured constructor to be returned,
+         -- but this choice action does obscure it perfectly
+         -- ...
+          (!!)        (SOP.apInjs_POP  $ trace "SOP.apInjs_POP ← recover'" $ recover' p ctx (datatypeInfo p)) <$> pure 0
+         -- XXXXXXXXXXXXXXXXXXXX: just pick 0'th: not much help
+         --(trace "fmap ← restoreChoice" $ restoreChoice ctx p)
+         )
           -- indexNPbyNS (SOP.apInjs'_POP $ recover' p ctx $ datatypeInfo p) <$> (pure $ S(Z(K())))
   where
     p = Proxy ∷ Proxy a
@@ -239,7 +246,11 @@ withNames p ctx consName consNr (fs ∷ NP (K Text) xs) = hcliftA (pRField (Prox
   where
     aux ∷ RestoreField ctx f ⇒ K Text f → IO f
     aux (K "") = error "Empty field names not supported."
-    aux (K fi) = trace ("withNames/aux "<>unpack fi<>"/"<>unpack consName) $ restoreField ctx (consCtx ctx p consName consNr) (toField p fi)
+    aux (K fi) =
+      trace ("withNames/aux ← restoreField "<>unpack fi<>"/"<>unpack consName) $
+      restoreField (trace ("restoreField ← ctx fi="<>unpack fi) ctx)
+      (trace ("restoreField ← consCtx fi="<>unpack fi) $ consCtx ctx p consName consNr)
+      (trace ("restoreField ← toField fi="<>unpack fi) $ toField p fi)
 
 store   ∷ ∀ a ctx.     (CtxRecord ctx a, All2 (StoreField ctx) (Code a), HasCallStack)
         ⇒ ctx → a → IO ()

@@ -150,8 +150,10 @@ instance WriteField PKGCtx Package
 instance WriteField PKGCtx Patch
 instance WriteField PKGCtx Src
 
-instance  RestoreField PKGCtx GHCConfStatic            where
-  restoreField (PKGDB{..}, en) cn fi = error "restoreField GHCConfStatic"
+instance RestoreField PKGCtx GHCConfStatic            where
+  -- restoreField ctx cn fi = error "restoreField GHCConfStatic"
+  -- restoreField (db, en) cn fi = error "restoreField GHCConfStatic"
+  restoreField ((PKGDB _ _ _), en) cn fi = error "restoreField GHCConfStatic"
     -- coerce ∘ fromJust <$> (error "read'" ∷ a → b → c → Field → IO (Maybe Text)) -- read'
     -- (error "db") --(PKGDB (error "a") (error "b") (error "c"))
     -- (error "cn")
