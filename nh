@@ -547,6 +547,7 @@ _set() {
 set_stdin() {
         local TYPE="$1" FIELD="$2" NAME="$3"
 
+        mkdir -p ${PKGDB}/${TYPE}
         cat > ${PKGDB}/${TYPE}/${NAME}.${FIELD}
 }
 edit() {
@@ -1648,17 +1649,16 @@ emit_overrides() {
         case ${format} in
         overrides )
                 cat <<EOF
-{ pkgs, haskellLib, super, self }:
+{ self, super, pkgs, ... }:
 
-with haskellLib; with self; {
+with pkgs.haskell.lib; with self; {
 EOF
                            ;;
         configuration-ghc )
                 cat <<EOF
-{ pkgs, haskellLib }:
+{ pkgs, ... }:
 
-with haskellLib;
-
+with pkgs.haskell.lib;
 self: super: {
 
 EOF
