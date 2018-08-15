@@ -2,9 +2,12 @@
 
 set -e
 
-DEFAULT_GHC=841  ## The value is actually configured, so this is for the absolute defaults.
+DEFAULT_GHC=843  ## The value is actually configured, so this is for the absolute defaults.
 DEFAULT_GHC_CONFIG=configuration-ghc-8.4.x.nix
+DEFAULT_WWW_BROWSER="firefox --new-tab"
 ACME_ATTRIBUTE=nh-acme-grand-total-attribute
+GITHUB_USER=${GITHUB_USER:-$DEFAULT_GITHUB_USER}
+WWW_BROWSER=${WWW_BROWSER:-$DEFAULT_WWW_BROWSER}
 TARGET_NIXPKGS=
 NH_QUIET=
 NIX_BUILD_OPTIONS="--show-trace --cores 0"
@@ -194,12 +197,13 @@ emit_nh_config() {
         cat <<EOF
 GHC=${DEFAULT_GHC}
 GHC_CONFIG=${DEFAULT_GHC_CONFIG}
+WWW_BROWSER=${DEFAULT_WWW_BROWSER}
 PKGDB=${PKGDB}  # The override state database.
 GITHUB_USER=${github_user}
 EOF
 }
 
-emit_packages_nix() {
+emit_ghc_nix() {
         cat <<EOF
 { nixpkgs     ? import <nixpkgs> {}
 , pkgs        ? nixpkgs.pkgs, haskell ? pkgs.haskell
@@ -288,7 +292,7 @@ then NH_ROOT="$(realpath .)"
 elif test "$1" = "--init"
 then shift
      emit_nh_config      "pkgdb" > .nh
-     emit_packages_nix           > packages.nix
+     emit_ghc_nix                > ghc.nix
      if ! validate_pkgdb "pkgdb"
      then init_pkgdb     "pkgdb" --force
      fi
@@ -306,9 +310,9 @@ Consider the following:  cat > .nh
 
 $(emit_nh_config /home/user/configuration-ghc84x)
 
-Don't have packages.nix?  cat > packages.nix
+Don't have ghc.nix?  cat > ghc.nix
 
-$(emit_packages_nix)
+$(emit_ghc_nix)
 
 EOF
               exit 1
@@ -321,7 +325,7 @@ if test "$1" = "init"
 then shift; init_pkgdb "$@"; fi
 
 source ${NH_ROOT}/.nh
-NIX_GHC_PACKAGE_SET=${NH_ROOT}/packages.nix
+NIX_GHC_PACKAGE_SET=${NH_ROOT}/ghc.nix
 NIX_GHC_OVERRIDES=${NH_ROOT}/overrides.nix
 
 if test -z "${PKGDB}" || ! validate_pkgdb "${PKGDB}"
@@ -434,15 +438,17 @@ url() {
 
         local repo="$(repoName "${attr}")"
         case "${KIND}" in
-                upstream-github-cabal )      local upstream="$(upstream "${attr}")"
+                cabal | upstream-github-cabal )
+                                             local upstream="$(upstream "${attr}")"
                                              repo="$(repoName "${attr}")"
                                              echo -n "https://raw.githubusercontent.com/$(upstreamOrFail   $attr)/$repo/${gitrev}/$(get_def def/meta chdir $attr '')/$attr.cabal";;
                 user-github-cabal )          echo -n "https://raw.githubusercontent.com/$(repo_fixer $repo)/$repo/${gitrev}/$(get_def def/meta chdir $attr '')/$attr.cabal";;
-                upstream-github )            echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo";;
-                upstream-pulls )             echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/pulls";;
+                upstream | upstream-github ) echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo";;
+                pulls | upstream-pulls )     echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/pulls";;
                 user-github )                echo -n "https://github.com/$(               repo_fixer $repo)/$repo";;
                 self-github )                echo -n                    "git@github.com:$(echo   $GITHUB_USER)/$repo";;
                 upstream-pull-request )      echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/pull/$(prOrFail $repo)";;
+                issues )                     echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/issues";;
                 upstream-issue )             echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/issues/$(issueOrFail $repo)";;
                 commits | upstream-commits ) echo -n "https://github.com/$(               upstreamOrFail   $attr)/$repo/commits/master";;
                 user-commits )               echo -n "https://github.com/$(               repo_fixer $repo)/$repo/commits/master";;
@@ -982,6 +988,8 @@ hackage_cabal_upstream_url() {
 
 test_hackage_release() {
         local release="$1"; shift
+        test -n "${release}" ||
+            fail "undefined release arg"
         local attr="$1"; shift
 
         endpoint_test_status 'HTTP/1.1 200 OK' hackage-package ${attr} --release ${release}
@@ -989,6 +997,8 @@ test_hackage_release() {
 hackage_release_date() {
         local attr="$1"; shift
         local release="$1"; shift
+        test -n "${release}" ||
+            fail "undefined release arg"
 
         local ret="$(endpoint_field 'Last-modified' hackage-package ${attr} --release ${release})"
         if test -z "${ret}"
@@ -1007,13 +1017,22 @@ hackage_release_timestamp() {
 hackage_ahead_of_fix() {
         local attr="$1"
         local upstream_release=$(get_upstream_release ${attr})
-        if test_hackage_release ${upstream_release} ${attr}
+        if test_hackage_release "${upstream_release}" "${attr}"
         then
                 local hackage_timestamp=$(hackage_release_timestamp ${attr} ${upstream_release})
                 local fix_stamp=$(fix_timestamp ${attr})
                 test ${fix_stamp} -le ${hackage_timestamp}
         else
                 return 1
+        fi
+}
+
+hadex_repo_upstream() {
+        local repo="$1"; shift
+        local ret=$(curl --silent https://raw.githubusercontent.com/deepfire/hadex/master/file/cabal-github-upstream/${repo})
+        if test ${PIPESTATUS[0]} = 0 -a -n "$ret"
+        then echo -n "$ret"
+        else return 1
         fi
 }
 
@@ -1176,8 +1195,8 @@ overview_one() {
                commits: $(url upstream-commits ${attr})
          pull requests: $(url upstream-pulls ${attr})
                hackage: $(url hackage ${attr})
-  last upstream release on hackage: $(iff yes no test_hackage_release ${upstream_release} ${attr})
-  hackage release date: $(hackage_release_date ${attr} ${upstream_release})
+  last upstream release on hackage: $(iff yes no test_hackage_release "${upstream_release}" ${attr})
+  hackage release date: $(hackage_release_date ${attr} "${upstream_release}")
 EOF
         case ${status} in
           upstreamed ) cat <<EOF
@@ -1675,7 +1694,7 @@ EOF
         if test -n "${EMIT_EXTRA_DEFS}" -a "${target}" = "local"
         then echo >&2
              echo "WARNING:  emitting extra definitions using 'nha':" >&2
-             # nix-shell  -p haskell.packages.ghc841.nh --run "nha emit-extra-defn"
+             # nix-shell  -p haskell.packages.ghc843.nh --run "nha emit-extra-defn"
              nix-shell "${NIX_GHC_PACKAGE_SET}" -A nh --run "nha emit-extra-defn"
              # nha emit-extra-defn
         fi
@@ -1698,10 +1717,28 @@ apply() {
         fi
 }
 
+detect_upstream_url() {
+        local attr="$1"; shift
+        local repo="$(repoName ${attr})"
+        if repo_has_upstream "${repo}"
+        then url upstream ${attr}; return 0
+        fi
+        local cabal_upstream_url="$(hackage_cabal_upstream_url $attr || true)"
+        if test -n "${cabal_upstream_url}"
+        then echo  "${cabal_upstream_url}"; return 0
+        fi
+        local hadex_upstream_name="$(hadex_repo_upstream $repo || true)"
+        if test -n "${hadex_upstream_name}"
+        then set_upstream "${attr}" "${hadex_upstream_name}"
+             url upstream ${attr}; return 0
+        fi
+        return 1
+}
+
 import_hackage_cabal() {
         local attr="$1"; shift
         echo "importing cabal package '${attr}'.."
-        local url="$(hackage_cabal_upstream_url $attr || true)"
+        local url="$(detect_upstream_url $attr || true)"
         if test -z "${url}"
         then fail "failed to detect upstream URL for '$attr'"; fi
         local chdir="$(hackage_cabal_chdir $attr || true)"
@@ -3040,7 +3077,9 @@ mentions | nixpkgs-mentions )
 
 www )              # HELP "www URL-KIND ATTR"     "Elinks -> an URL associated with ATTR" || return 0
                    local kind="$1" name="$2";
-                   elinks "$(url $kind $name)"
+                   local url="$(url $kind $name)"
+                   echo "URL: ${url}"
+                   test -n "${url}" && ${WWW_BROWSER} "${url}" || exit 1
                    ;;
 
  * )		   fail "unknown command '${command}'";;
